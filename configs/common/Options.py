@@ -768,6 +768,35 @@ def addSEOptions(parser):
     )
 
 
+def addSimpointRunOptions(parser):
+    from common.FSConfig import os_types
+
+    # Simulation options
+    parser.add_argument(
+        "--sim_num",
+        action="store",
+        type=int,
+        help="Which simpoint cp to restore",
+    )
+
+    # Simulation options
+    parser.add_argument(
+        "--speculativeLoadPolicy",
+        action="store",
+        type=str,
+        help="Which scheme to use",
+    )
+    # Simulation options
+    parser.add_argument(
+        "--threatModel",
+        default="Spectre",
+        action="store",
+        type=str,
+        choices=["Spectre", "Futuristic"],
+        help="Which scheme to use",
+    )
+
+
 def addFSOptions(parser):
     from common.FSConfig import os_types
 
@@ -897,4 +926,37 @@ def addFSOptions(parser):
         default=False,
         action="store_true",
         help="Wait for remote GDB to connect.",
+    )
+
+
+def addCALOptions(parser):
+    parser.add_argument(
+        "-fs",
+        "--full-system",
+        action="store_true",
+        help="Simulate benchmarks in full system mode",
+    )
+
+    parser.add_argument(
+        "--benches",
+        action="store",
+        type=str,
+        default="spec2017",
+        help="determine benchmark suite",
+    )
+
+    parser.add_argument(
+        "--iteration",
+        action="store",
+        type=int,
+        default=0,
+        help="determine sub action",
+    )
+
+    parser.add_argument(
+        "--config",
+        action="store",
+        type=str,
+        default="blank",
+        help="placeholder",
     )
