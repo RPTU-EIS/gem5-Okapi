@@ -1,0 +1,47 @@
+./perlbench -I./lib checkspam.pl 2500 5 25 11 150 1 1 1 1
+./perlbench -I./lib diffmail.pl 4 800 10 17 19 300
+./perlbench -I./lib splitmail.pl 1600 12 26 16 4500
+./bzip2 input.source 280
+./bzip2 chicken.jpg 30
+./bzip2 liberty.jpg 30
+./bzip2 input.program 280
+./bzip2 text.html 280
+./bzip2 input.combined 200
+./gcc 166.in -o 166.s
+./gcc 200.in -o 200.s
+./gcc c-typeck.in -o c-typeck.s
+./gcc cp-decl.in -o cp-decl.s
+./gcc expr.in -o expr.s
+./gcc expr2.in -o expr2.s
+./gcc g23.in -o g23.s
+./gcc s04.in -o s04.s
+./gcc scilab.in -o scilab.s
+./mcf inp.in
+./milc
+./zeusmp
+./cactusADM benchADM.par
+./leslie3d
+./namd --input namd.input --iterations 38 --output namd.out
+./gobmk --quiet --mode gtp
+./gobmk --quiet --mode gtp
+./gobmk --quiet --mode gtp
+./gobmk --quiet --mode gtp
+./gobmk --quiet --mode gtp
+./povray SPEC-benchmark-ref.ini
+./calculix -i  hyperviscoplastic
+./hmmer nph3.hmm swiss41
+./hmmer --fixed 0 --mean 500 --num 500000 --sd 350 --seed 0 retro.hmm
+./sjeng ref.txt
+./GemsFDTD
+./libquantum 1397 8
+./h264ref -d foreman_ref_encoder_baseline.cfg
+./h264ref -d foreman_ref_encoder_main.cfg
+./h264ref -d sss_encoder_main.cfg
+./tonto
+./lbm 3000 reference.dat 0 0 100_100_130_ldc.of
+./omnetpp omnetpp.ini
+./astar BigLakes2048.cfg
+./astar rivers.cfg
+./wrf
+./sphinx3 ctlfile . args.an4
+./xalancbmk -v t5.xml xalanc.xsl
