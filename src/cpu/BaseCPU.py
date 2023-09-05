@@ -57,6 +57,14 @@ from m5.util.fdthelper import *
 default_tracer = ExeTracer()
 
 
+class SpeculativeLoadPolicy(ScopedEnum):
+    vals = ["None", "NaiveDelay", "EagerDelay", "STT", "Okapi"]
+
+
+class ThreatModel(ScopedEnum):
+    vals = ["Futuristic", "Spectre"]
+
+
 class BaseCPU(ClockedObject):
     type = "BaseCPU"
     abstract = True
@@ -119,6 +127,14 @@ class BaseCPU(ClockedObject):
     checker = Param.BaseCPU(NULL, "checker CPU")
 
     syscallRetryLatency = Param.Cycles(10000, "Cycles to wait until retry")
+
+    speculativeLoadPolicy = Param.SpeculativeLoadPolicy(
+        "None",
+        "Enable policies to prevent speculative side-channel vulnerabilities",
+    )
+    threatModel = Param.ThreatModel(
+        "Futuristic", "Whether to enable all shadows or only C-Shadows"
+    )
 
     do_checkpoint_insts = Param.Bool(
         True, "enable checkpoint pseudo instructions"

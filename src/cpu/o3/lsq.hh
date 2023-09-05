@@ -192,6 +192,47 @@ class LSQ
         typedef uint32_t FlagsStorage;
         typedef Flags<FlagsStorage> FlagsType;
 
+        FlagsType flags;
+
+        enum class State
+        {
+            NotIssued,
+            Translation,
+            Request,
+            Fault,
+            PartialFault,
+        };
+        State _state;
+        void setState(const State& newState) { _state = newState; }
+
+        uint32_t numTranslatedFragments;
+        uint32_t numInTranslationFragments;
+
+
+        void markDelayed() override { flags.set(Flag::Delayed); }
+        bool isDelayed() { return flags.isSet(Flag::Delayed); }
+
+        void markOkapiBlocked() override { flags.set(Flag::OkapiBlocked); }
+
+    public:
+        LSQUnit& _port;
+        DynInstPtr _inst;
+        uint32_t _taskId;
+        PacketDataPtr _data;
+        std::vector<PacketPtr> _packets;
+        std::vector<RequestPtr> _reqs;
+        std::vector<Fault> _fault;
+        uint64_t* _res;
+        const Addr _addr;
+        const uint32_t _size;
+        const Request::Flags _flags;
+        std::vector<bool> _byteEnable;
+        uint32_t _numOutstandingPackets;
+        AtomicOpFunctorPtr _amo_op;
+        bool _hasStaleTranslation;
+
+        bool isOkapiBlocked() { return flags.isSet(Flag::OkapiBlocked); }
+
         enum Flag : FlagsStorage
         {
             IsLoad              = 0x00000001,
@@ -220,46 +261,10 @@ class LSQ
             WritebackScheduled  = 0x00001000,
             WritebackDone       = 0x00002000,
             /** True if this is an atomic request */
-            IsAtomic            = 0x00004000
+            IsAtomic            = 0x00004000,
+            OkapiBlocked        = 0x00008000
         };
-        FlagsType flags;
-
-        enum class State
-        {
-            NotIssued,
-            Translation,
-            Request,
-            Fault,
-            PartialFault,
-        };
-        State _state;
-        void setState(const State& newState) { _state = newState; }
-
-        uint32_t numTranslatedFragments;
-        uint32_t numInTranslationFragments;
-
-
-        void markDelayed() override { flags.set(Flag::Delayed); }
-        bool isDelayed() { return flags.isSet(Flag::Delayed); }
-
-      public:
-        LSQUnit& _port;
-        const DynInstPtr _inst;
-        uint32_t _taskId;
-        PacketDataPtr _data;
-        std::vector<PacketPtr> _packets;
-        std::vector<RequestPtr> _reqs;
-        std::vector<Fault> _fault;
-        uint64_t* _res;
-        const Addr _addr;
-        const uint32_t _size;
-        const Request::Flags _flags;
-        std::vector<bool> _byteEnable;
-        uint32_t _numOutstandingPackets;
-        AtomicOpFunctorPtr _amo_op;
-        bool _hasStaleTranslation;
-
-      protected:
+    protected:
         LSQUnit* lsqUnit() { return &_port; }
         LSQRequest(LSQUnit* port, const DynInstPtr& inst, bool isLoad);
         LSQRequest(LSQUnit* port, const DynInstPtr& inst, bool isLoad,
@@ -295,6 +300,7 @@ class LSQ
          * but there is any in-flight translation request to the TLB or access
          * request to the memory.
          */
+    public:
         void
         release(Flag reason)
         {
@@ -305,6 +311,8 @@ class LSQ
                 flags.set(reason);
             }
         }
+        virtual ~LSQRequest();
+    protected:
 
         /** Helper function used to add a (sub)request, given its address
          * `addr`, size `size` and byte-enable mask `byteEnable`.
@@ -313,13 +321,13 @@ class LSQ
          * element in the mask.
          */
         void addReq(Addr addr, unsigned size,
-                const std::vector<bool>& byte_enable);
+                const std::vector<bool>& byte_enable, bool is_squashable);
 
         /** Destructor.
          * The LSQRequest owns the request. If the packet has already been
          * sent, the sender state will be deleted upon receiving the reply.
          */
-        virtual ~LSQRequest();
+
 
       public:
         /** Convenience getters/setters. */
@@ -331,7 +339,9 @@ class LSQ
             req()->setContext(context_id);
         }
 
-        const DynInstPtr& instruction() { return _inst; }
+        DynInstPtr& instruction() { return _inst; }
+
+        void resetInstruction();
 
         bool hasStaleTranslation() const { return _hasStaleTranslation; }
 

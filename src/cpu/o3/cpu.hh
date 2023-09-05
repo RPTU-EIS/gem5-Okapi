@@ -67,6 +67,8 @@
 #include "cpu/base.hh"
 #include "cpu/simple_thread.hh"
 #include "cpu/timebuf.hh"
+#include "enums/SpeculativeLoadPolicy.hh"
+#include "enums/ThreatModel.hh"
 #include "params/BaseO3CPU.hh"
 #include "sim/process.hh"
 
@@ -483,7 +485,13 @@ class CPU : public BaseCPU
      */
     ActivityRecorder activityRec;
 
-  public:
+
+    //! Okapi Philipp Schmitz 02.08.2023
+    const ThreatModel threatModel;
+    const SpeculativeLoadPolicy speculativeLoadPolicy;
+
+
+    public:
     /** Records that there was time buffer activity this cycle. */
     void activityThisCycle() { activityRec.activity(); }
 
@@ -572,6 +580,19 @@ class CPU : public BaseCPU
     {
         return iew.ldstQueue.getDataPort();
     }
+
+    SpeculativeLoadPolicy
+    getSpeculativeLoadPolicy () const
+    {
+        return speculativeLoadPolicy;
+    }
+
+    ThreatModel
+    getThreatModel () const
+    {
+        return threatModel;
+    }
+
 
     struct CPUStats : public statistics::Group
     {

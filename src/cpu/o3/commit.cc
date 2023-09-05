@@ -632,6 +632,7 @@ Commit::tick()
                     " ROB and ready to commit\n",
                     tid, inst->seqNum, inst->pcState());
 
+            rob_stuck = 0;
         } else if (!rob->isEmpty(tid)) {
             const DynInstPtr &inst = rob->readHeadInst(tid);
 
@@ -640,6 +641,14 @@ Commit::tick()
             DPRINTF(Commit,"[tid:%i] Can't commit, Instruction [sn:%llu] PC "
                     "%s is head of ROB and not ready\n",
                     tid, inst->seqNum, inst->pcState());
+            rob_stuck++;
+        }
+        if (rob_stuck >= 100000000) {
+            std::cout << "ROB did not progress for more than "
+                         "100000000 cycles! Abort simulation! "
+                         "Inst at head [sn:"
+                      << rob->readHeadInst(tid)->seqNum << std::endl;
+            assert(0);
         }
 
         DPRINTF(Commit, "[tid:%i] ROB has %d insts & %d free entries.\n",

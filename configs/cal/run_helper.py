@@ -1,8 +1,10 @@
 from multiprocessing import Process
 import os
 import time
+import glob
 import shutil
 import sys
+from datetime import datetime
 
 work_root = os.getcwd()
 gem5_root = f"/data/schmitz/gem5-Okapi"
@@ -11,7 +13,7 @@ cal = f"{gem5_root}/configs/cal"
 results = f"{gem5_root}/results"
 checkpoints = f"{gem5_root}/configs/cal/checkpoints"
 simfiles = f"{gem5_root}/configs/cal/analysis"
-simpoints = f"{gem5_root}/configs/cal/simpoints"
+simpoints = f"/data/schmitz/simpoints"
 
 syscall_mode = False
 if syscall_mode:
@@ -70,16 +72,16 @@ def get_extra_args(bench, index, full_system):
 
 
 def get_scheme_args(scheme, ap):
-    if ap:
-        return f" --scheme {scheme} --address_prediction"
+    # if ap:
+    #    return f" --scheme {scheme} --address_prediction"
     return f" --speculativeLoadPolicy {scheme} --threatModel Spectre"
 
 
 def get_tdiff_scheme_args(scheme, ap):
     assert scheme != 0
-    if not ap:
-        return f" --scheme '0|{scheme}'"
-    return f" --scheme {scheme} '|--address_prediction'"
+    # if not ap:
+    #    return f" --scheme '0|{scheme}'"
+    return f" --speculativeLoadPolicy {scheme}"  # '|--address_prediction'"
 
 
 def get_syscall_args(bench, bname, iteration, index):
@@ -135,6 +137,16 @@ def copy_cpt(bench, bname, iteration):
     shutil.copytree(src, dst)
 
 
+def copy_cpt_dir(bench, bname, iteration, wdir):
+    if not os.path.exists(f"{wdir}/{bname}_{iteration}/cpts"):
+        os.mkdir(f"{wdir}/{bname}_{iteration}/cpts")
+    src = f"{checkpoints}/{bench}/{bname}_{iteration}-cpt"
+    dst = f"{wdir}/{bname}_{iteration}/cpts/cpt.None.1"
+    shutil.copytree(src, dst)
+    dst = f"{wdir}/{bname}_{iteration}/cpts/cpt.1"
+    shutil.copytree(src, dst)
+
+
 def cleanup_cpts():
     if os.path.exists("cpts"):
         shutil.rmtree("cpts")
@@ -186,8 +198,8 @@ def setup_workdir(wdir):
     os.mkdir(wdir)
 
 
-def setup_rundir(bname, iteration, wdir):
-    tgt = f"{wdir}/{bname}_{iteration}"
+def setup_rundir(bname, iteration, wdir, scheme):
+    tgt = f"{wdir}/{bname}_{iteration}_{scheme}"
     if os.path.exists(tgt):
         shutil.rmtree(tgt)
     os.mkdir(tgt)
@@ -206,10 +218,25 @@ def run_benchmark(bench, bname, iteration, index, config, scheme, ap):
     print(f"Finished with code {os.system(run_ref)}")
 
 
+def run_benchmark_dir(
+    bench, bname, iteration, index, config, scheme, ap, wdir
+):
+    args = get_extra_args(bench, index, True)
+    # args += get_scheme_args(scheme, ap)
+    args += f" --checkpoint-dir={simpoints}/{bench}/{bname}_{iteration}"
+
+    run_ref = f"{gem5} -r --debug-flags=SyscallAll {cal}/{config} {args}"
+    print(run_ref)
+    os.chdir(f"{wdir}")
+    print(f"Finished with code {os.system(run_ref)}")
+
+
 def run_tdiff_benchmark(bench, bname, iteration, index, scheme, ap):
     num_sims = get_num_points(bench, bname, iteration)
     args = get_extra_args(bench, index, True)
+
     # args += get_tdiff_scheme_args(scheme, ap)
+    args += f" --checkpoint-dir={simpoints}/{bench}/{bname}_{iteration}"
 
     for x in range(num_sims):
         redirect = f"-r --outdir={bname}_{iteration}_{x}_out"
@@ -226,7 +253,7 @@ def run_sim_benchmark(bench, bname, iteration, index, scheme, ap, s_name=""):
     num_sims = get_num_points(bench, bname, iteration)
     args = get_extra_args(bench, index, not syscall_mode)
     args += get_scheme_args(scheme, ap)
-
+    args += f" --checkpoint-dir={simpoints}/{bench}/{bname}_{iteration}"
     if syscall_mode:
         args += get_syscall_args(bench, bname, iteration, index)
 
@@ -234,18 +261,21 @@ def run_sim_benchmark(bench, bname, iteration, index, scheme, ap, s_name=""):
         args += f" --config {s_name}"
 
     for x in range(num_sims):
+        # redirect = f"--debug-flags=O3CPUAll,TLB,PageTableWalker --debug-start=16327763846379"# -r --outdir={bname}_{iteration}_{x}_out" #
         # redirect = f"--debug-flags=O3CPUAll"# -r --outdir={bname}_{iteration}_{x}_out"
-        redirect = f"-r --outdir={bname}_{iteration}_{x}_out"
-        run_ref = f"{gem5} {redirect} {run_sim} {args} --sim_num {x}"  # |rotatelogs -t /data/schmitz/gem5_bench_runs/okapilog.log  1G"
+        redirect = f"-r --outdir={bname}_{iteration}_{x}_{scheme}_out"
+        run_ref = f"{gem5} {redirect} {run_sim} {args} --sim_num {x}"  # |rotatelogs -t /data/schmitz/gem5_okapi_bench_runs/okapilog{x}.log  1G"
         print(run_ref)
         print(f"Finished with code {os.system(run_ref)}")
 
 
 def get_scheme_and_ap_from_tag(tag):
     if tag == "bl":
-        return (0, False)
-    if tag == "uap" or tag == "bl+ap":
-        return (0, True)
+        return ("None", False)
+    if tag == "NaiveDelay":
+        return ("NaiveDelay", False)
+    if tag == "EagerDelay":
+        return ("EagerDelay", False)
     if tag == "mp" or tag == "delay":
         return (1, False)
     if tag == "ap" or tag == "delay+ap" or tag == "mp+ap":
@@ -268,10 +298,19 @@ def main():
     bench = sys.argv[1]
     task = sys.argv[2]
 
-    smp_p, smp_t, smp_r, cpt_t, tdiff = [False, False, False, False, False]
+    smp_p, smp_t, smp_r, cpt_t, tdiff, cpt_and_smp_p = [
+        False,
+        False,
+        False,
+        False,
+        False,
+        False,
+    ]
 
     if task == "profile":
         smp_p = True
+    elif task == "cptandprofile":
+        cpt_and_smp_p = True
     elif task == "take":
         smp_t = True
     elif task == "run":
@@ -310,10 +349,10 @@ def main():
             setup_results(rdir, tdir)
         setup_workdir(wdir)
 
-    setup_rundir(bname, iteration, wdir)
+    setup_rundir(bname, iteration, wdir, scheme)
 
     print(smp_p, smp_t, smp_r, cpt_t, tdiff)
-    assert sum([smp_p, smp_t, smp_r, cpt_t, tdiff]) == 1
+    assert sum([smp_p, smp_t, smp_r, cpt_t, tdiff, cpt_and_smp_p]) == 1
 
     config = ""
     if smp_p:
@@ -329,7 +368,7 @@ def main():
 
     cwd = os.getcwd()
 
-    os.chdir(f"{wdir}/{bname}_{iteration}")
+    os.chdir(f"{wdir}/{bname}_{iteration}_{scheme}")
 
     if smp_p or smp_t:
         copy_cpt(bench, bname, iteration)
@@ -350,6 +389,53 @@ def main():
     elif tdiff:
         run_tdiff_benchmark(bench, bname, iteration, index, scheme, ap)
     # rest require only a single config-handled run
+    elif cpt_and_smp_p:
+        # step 1: take checkpoint
+        config = "take_checkpoint.py"
+
+        t = datetime.now()
+        date_time_string = t.strftime("%Y%m%d%H%M%S")
+        run_benchmark(bench, bname, iteration, index, config, scheme, ap)
+        # TODO check for exit code
+        # step2: copy checkpoint to the file system
+        src = f"{wdir}/{bname}_{iteration}/cpts/cpt.None.1400000000"
+        dst = f"{checkpoints}/{bench}/{bname}_{iteration}-cpt"
+        step_2_successfull = False
+
+        if os.path.exists(src):
+            shutil.copytree(src, dst)
+            step_2_successfull = True
+        else:
+            print(
+                "No checkpoint created during cpt take step. Skipping profile step!"
+            )
+        # additionally copy the working dir into the backup folder to be able to check it later
+        src = f"{wdir}"
+        dst = f"/data/schmitz/gem5_okapi_bench_runs/python_backup/{bname}_{iteration}_cpt_{date_time_string}"
+        shutil.copytree(src, dst)
+        # step3 prepare the jobs directory to be able to run the profile step
+
+        # step3 profile the checkpoint
+        if step_2_successfull:
+            setup_rundir(bname, iteration, wdir, scheme)
+            copy_cpt_dir(bench, bname, iteration, wdir)
+            config = "simpoint_profile.py"
+            bmark_dir = f"{wdir}/{bname}_{iteration}"
+            run_benchmark_dir(
+                bench, bname, iteration, index, config, scheme, ap, bmark_dir
+            )
+    elif smp_t:
+        run_benchmark(bench, bname, iteration, index, config, scheme, ap)
+        # src = f"{wdir}/{bname}_{iteration}/m5out/cpt.simpoint*"
+        dst_base = f"/import/home/share_folder/Simpoint_checkpoints/{bname}"
+        for src in glob.glob(
+            f"{wdir}/{bname}_{iteration}/m5out/cpt.simpoint*"
+        ):
+            simpoint = src.split("/")[-1]
+            dst = f"{dst_base}/{bname}_{iteration}/{simpoint}"
+            print(dst)
+            shutil.copytree(src, dst)
+
     else:
         run_benchmark(bench, bname, iteration, index, config, scheme, ap)
 

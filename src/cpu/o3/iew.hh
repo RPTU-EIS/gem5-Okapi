@@ -50,6 +50,7 @@
 #include "cpu/o3/inst_queue.hh"
 #include "cpu/o3/limits.hh"
 #include "cpu/o3/lsq.hh"
+#include "cpu/o3/rob.hh"
 #include "cpu/o3/scoreboard.hh"
 #include "cpu/timebuf.hh"
 #include "debug/IEW.hh"
@@ -155,6 +156,9 @@ class IEW
 
     /** Sets pointer to the scoreboard. */
     void setScoreboard(Scoreboard *sb_ptr);
+
+    /** Sets ROB pointer */
+    void setROB(ROB *rob_ptr);
 
     /** Perform sanity checks after a drain. */
     void drainSanityCheck() const;
@@ -337,6 +341,9 @@ class IEW
 
     /** Scoreboard pointer. */
     Scoreboard* scoreboard;
+
+    /** ROB Pointer */
+    ROB* rob;
 
   private:
     /** CPU pointer. */

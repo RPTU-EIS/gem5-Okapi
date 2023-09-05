@@ -312,6 +312,12 @@ IEW::setScoreboard(Scoreboard *sb_ptr)
     scoreboard = sb_ptr;
 }
 
+void
+IEW::setROB(ROB *rob_ptr)
+{
+    rob = rob_ptr;
+}
+
 bool
 IEW::isDrained() const
 {
@@ -1184,6 +1190,14 @@ IEW::executeInsts()
                     instQueue.deferMemInst(inst);
                     continue;
                 }
+                //!Private Domain Philipp Schmitz 17.02.2023
+                if (inst->isInStallList() && fault == NoFault) {
+                    //The load needs to be stalled -> defer instruction
+                    DPRINTF(IEW, "Execute: Delayed translation, deferring "
+                                 "load.\n");
+                    instQueue.deferMemInst(inst);
+                    continue;
+                }
 
                 if (inst->isDataPrefetch() || inst->isInstPrefetch()) {
                     inst->fault = NoFault;
@@ -1467,6 +1481,34 @@ IEW::tick()
 
             updateLSQNextCycle = true;
             instQueue.commit(fromCommit->commitInfo[tid].doneSeqNum,tid);
+        }
+
+        if (cpu->getSpeculativeLoadPolicy() ==
+            SpeculativeLoadPolicy::EagerDelay ||
+            cpu->getSpeculativeLoadPolicy() == SpeculativeLoadPolicy::Okapi) {
+            DPRINTF(IEW,"Request updating the shadowed insts [tid:%i]\n",tid);
+            auto insts = rob->updateShadowedInsts(tid);
+            if (cpu->getSpeculativeLoadPolicy() ==
+                SpeculativeLoadPolicy::EagerDelay) {
+                for (auto inst : insts) {
+                    DPRINTF(IEW, "Replay unshadowed "
+                                 "inst PC %s [sn:%llu]\n"
+                                 , inst->pcState(), inst->seqNum);
+                    instQueue.replayMemInst(inst);
+                    inst->setAtCommit();
+                }
+            } else if (cpu->getSpeculativeLoadPolicy() ==
+                       SpeculativeLoadPolicy::Okapi) {
+                for (auto inst : insts) {
+                    //if (!inst->isIssued()) {
+                    DPRINTF(IEW, "Do not replay unshadowed inst "
+                                     "that had a ld/st forwarding error"
+                                     " %s [sn:%llu]\n"
+                                     , inst->pcState(), inst->seqNum);
+                    //    instQueue.replayMemInst(inst);
+                    //}
+                }
+            }
         }
 
         if (fromCommit->commitInfo[tid].nonSpecSeqNum != 0) {

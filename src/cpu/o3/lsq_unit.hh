@@ -538,6 +538,15 @@ class LSQUnit
         /** Distribution of cycle latency between the first time a load
          * is issued and its completion */
         statistics::Distribution loadToUse;
+
+        /**
+         * Number of Okapi Loads that hit in the TLB */
+        statistics::Scalar okapiHits;
+
+        /**
+         * Number of Okapi Loads that miss in the TLB */
+        statistics::Scalar okapiMisses;
+
     } stats;
 
   public:

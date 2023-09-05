@@ -93,6 +93,11 @@ namespace X86ISA
 
         TlbEntryTrie::Handle trieHandle;
 
+        //!Okapi [Philipp Schmitz] 02.08.2023
+        //!Bit that is set when a tlb entry has been used by a process
+        //TODO change datatype
+        uint16_t inDomain = 0;
+
         TlbEntry(Addr asn, Addr _vaddr, Addr _paddr,
                  bool uncacheable, bool read_only);
         TlbEntry();

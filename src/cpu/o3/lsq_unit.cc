@@ -270,7 +270,12 @@ LSQUnit::LSQUnitStats::LSQUnitStats(statistics::Group *parent)
                "Number of times an access to memory failed due to the cache "
                "being blocked"),
       ADD_STAT(loadToUse, "Distribution of cycle latency between the "
-                "first time a load is issued and its completion")
+                "first time a load is issued and its completion"),
+      ADD_STAT(okapiHits, statistics::units::Count::get(),
+               "Number of okapi loads that succeed"),
+      ADD_STAT(okapiMisses, statistics::units::Count::get(),
+               "Number of okapi loads that need to be rescheduled")
+
 {
     loadToUse
         .init(0, 299, 10)
@@ -597,7 +602,36 @@ LSQUnit::executeLoad(const DynInstPtr &inst)
 
     assert(!inst->isSquashed());
 
-    load_fault = inst->initiateAcc();
+    if (!inst->isUnsafeLoad()) {
+        inst->removeFromStallList();
+        load_fault = inst->initiateAcc();
+    } else {
+
+        if (cpu->getSpeculativeLoadPolicy() ==
+           SpeculativeLoadPolicy::EagerDelay ||
+           cpu->getSpeculativeLoadPolicy() ==
+           SpeculativeLoadPolicy::NaiveDelay) {
+            //Do not initiate the load it needs to be delayed
+            DPRINTF(LSQUnit, "Delaying load PC %s, [sn:%lli]"
+                             " because it is speculative\n",
+                             inst->pcState(), inst->seqNum);
+            inst->addToStallList();
+            load_fault = NoFault;
+        } else if (cpu->getSpeculativeLoadPolicy() ==
+          SpeculativeLoadPolicy::Okapi) {
+            //initiate the load
+            //it has to go to TLB
+            load_fault = inst->initiateAcc();
+            if (inst->isOkapiLoad() && inst->translationCompleted()) {
+                stats.okapiHits++;
+            } else if (inst->isOkapiLoad() && !inst->translationStarted()) {
+                stats.okapiMisses++;
+            }
+
+        } else {
+            assert(0);
+        }
+    }
 
     if (load_fault == NoFault && !inst->readMemAccPredicate()) {
         assert(inst->readPredicate());
@@ -608,8 +642,18 @@ LSQUnit::executeLoad(const DynInstPtr &inst)
         return NoFault;
     }
 
-    if (inst->isTranslationDelayed() && load_fault == NoFault)
+    if (inst->isTranslationDelayed() && load_fault == NoFault) {
+        DPRINTF(LSQUnit, "Translation delayed load PC %s, [sn:%lli]\n",
+                inst->pcState(), inst->seqNum);
         return load_fault;
+    }
+
+    if (inst->isInStallList() && load_fault == NoFault) {
+        DPRINTF(LSQUnit, "Translation stalled load PC %s, [sn:%lli]\n",
+                inst->pcState(), inst->seqNum);
+        return load_fault;
+    }
+
 
     if (load_fault != NoFault && inst->translationCompleted() &&
             inst->savedRequest->isPartialFault()
@@ -781,6 +825,7 @@ LSQUnit::writebackBlockedStore()
     assert(isStoreBlocked);
     storeWBIt->request()->sendPacketToCache();
     if (storeWBIt->request()->isSent()){
+        DPRINTF(LSQUnit, "812 blocked store post send\n");
         storePostSend();
     }
 }
@@ -907,6 +952,7 @@ LSQUnit::writebackStores()
 
         /* If successful, do the post send */
         if (request->isSent()) {
+            DPRINTF(LSQUnit, "938 store post send\n");
             storePostSend();
         } else {
             DPRINTF(LSQUnit, "D-Cache became blocked when writing [sn:%lli], "
@@ -959,7 +1005,7 @@ LSQUnit::squash(const InstSeqNum &squashed_num)
         loadQueue.pop_back();
         ++stats.squashedLoads;
     }
-
+    DPRINTF(LSQUnit,"Done squashing Load Queue\n");
     // hardware transactional memory
     // scan load queue (from oldest to youngest) for most recent valid htmUid
     auto scan_it = loadQueue.begin();
@@ -1541,6 +1587,9 @@ LSQUnit::read(LSQRequest *request, ssize_t load_idx)
                     (stalled &&
                      load_inst->seqNum <
                      loadQueue[stallingLoadIdx].instruction()->seqNum)) {
+                    DPRINTF(LSQUnit, "Stalled set to true "
+                                     "for instruction [sn:%llu]\n",
+                                     store_it->instruction()->seqNum);
                     stalled = true;
                     stallingStoreIsn = store_it->instruction()->seqNum;
                     stallingLoadIdx = load_idx;

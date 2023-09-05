@@ -215,6 +215,11 @@ InstructionQueue::IQStats::IQStats(CPU *cpu, const unsigned &total_width)
                 statistics::units::Count, statistics::units::Cycle>::get(),
              "Inst issue rate", instsIssued / cpu->baseStats.numCycles),
     ADD_STAT(fuBusy, statistics::units::Count::get(), "FU busy when requested"),
+    ADD_STAT(okapiLoadSquash, statistics::units::Count::get(),
+             "squashed Okapi load"),
+    ADD_STAT(okapiLoadReschedule, statistics::units::Count::get(),
+             "rescheduled Okapi load"),
+
     ADD_STAT(fuBusyRate, statistics::units::Rate<
                 statistics::units::Count, statistics::units::Count>::get(),
              "FU busy rate (busy events/executed inst)")
@@ -758,6 +763,7 @@ InstructionQueue::scheduleReadyInsts()
 
     DynInstPtr mem_inst;
     while ((mem_inst = getDeferredMemInstToExecute())) {
+        DPRINTF(IQ, "Found deferred Mem instruction\n");
         addReadyMemInst(mem_inst);
     }
 
@@ -1134,9 +1140,93 @@ InstructionQueue::cacheUnblocked()
 DynInstPtr
 InstructionQueue::getDeferredMemInstToExecute()
 {
-    for (ListIt it = deferredMemInsts.begin(); it != deferredMemInsts.end();
+    for (ListIt it = deferredMemInsts.begin();
+         it != deferredMemInsts.end();
          ++it) {
-        if ((*it)->translationCompleted() || (*it)->isSquashed()) {
+        DPRINTF(IQ, "[sn:%llu] in deferred Mem Insts "
+                    "buffer, unsafe? %s, translation started? %s\n"
+                    , (*it)->seqNum, (*it)->isUnsafeLoad(),
+                    (*it)->translationStarted());
+
+
+        //! Philipp Schmitz Okapi 02.08.2023
+        //! Adapt rescheduling logic to avoid live and deadlocks
+        if ((*it)->translationCompleted()) {
+            //! 1) page table walk completed
+            DPRINTF(IQ, "[sn:%llu] translation completed\n", (*it)->seqNum);
+            DynInstPtr mem_inst = std::move(*it);
+            deferredMemInsts.erase(it);
+            return mem_inst;
+        } else if ((*it)->isSquashed()) {
+            DPRINTF(IQ, "Remove [sn:%llu] from "
+                        "defferedMemInsts due to squash\n"
+                        , (*it)->seqNum);
+            if ((*it)->isOkapiLoad()) {
+                iqStats.okapiLoadSquash++;
+                DPRINTF(IQ, "[sn:%llu] is okapi load\n"
+                        , (*it)->seqNum);
+                if ((*it)->isNoLongerOkapiLoad()) {
+                    DPRINTF(IQ, "[sn:%llu] squashed load is no "
+                                "longer okapi -> squash should be "
+                                "handled elsewhere\n", (*it)->seqNum);
+                    DynInstPtr mem_inst = std::move(*it);
+                    deferredMemInsts.erase(it);
+                    return mem_inst;
+                } else {
+                    if ((*it)->savedRequest != nullptr) {
+                        auto inst = (*it);
+                        inst->translationCompleted(true);
+                        auto saved_req = inst->savedRequest;
+                        DPRINTF(IQ, "[sn:%llu] still has a saved"
+                                    " request, maybe that's the issue\n"
+                                    , (*it)->seqNum);
+                        for (const auto& r:  saved_req->_reqs) {
+                            std::cout << saved_req->name() << std::endl;
+                            saved_req->squashTranslation();
+                            saved_req->finish(NoFault, r,
+                                              nullptr, BaseMMU::Mode::Read);
+                        }
+                        //(*it)->savedRequest->squashTranslation();
+                        (*it)->savedRequest = nullptr;
+                        DPRINTF(IQ, "[sn:%llu] tried to squash it\n"
+                                , (*it)->seqNum);
+                    } else {
+                        DPRINTF(IQ, "[sn:%llu] squashed "
+                                    "request is already reset\n"
+                                    , (*it)->seqNum);
+                        DynInstPtr mem_inst = std::move(*it);
+                        deferredMemInsts.erase(it);
+                        return mem_inst;
+                    }
+                }
+
+
+
+            } else {
+                DPRINTF(IQ, "[sn:%llu] squashed load is was "
+                            "never okapi -> squash should be"
+                            " handled elsewhere\n", (*it)->seqNum);
+                DynInstPtr mem_inst = std::move(*it);
+                deferredMemInsts.erase(it);
+                return mem_inst;
+            }
+        } else if (!(*it)->isUnsafeLoad() &&
+          (*it)->isOkapiLoad() && !(*it)->isNoLongerOkapiLoad()) {
+            //&& !(*it)->translationStarted()) {
+            DPRINTF(IQ, "[sn:%llu] is no longer unsafe-> re-issue\n"
+                    , (*it)->seqNum);
+            DynInstPtr mem_inst = std::move(*it);
+            iqStats.okapiLoadReschedule++;
+            deferredMemInsts.erase(it);
+            return mem_inst;
+        } else if (!(*it)->isUnsafeLoad() && !(*it)->translationStarted() &&
+          (cpu->getSpeculativeLoadPolicy() ==
+          SpeculativeLoadPolicy::NaiveDelay ||
+          cpu->getSpeculativeLoadPolicy() ==
+          SpeculativeLoadPolicy::EagerDelay)) {
+            DPRINTF(IQ, "[sn:%llu] is no longer unsafe "
+                        "under naive or eager delay-> re-issue\n",
+                        (*it)->seqNum);
             DynInstPtr mem_inst = std::move(*it);
             deferredMemInsts.erase(it);
             return mem_inst;

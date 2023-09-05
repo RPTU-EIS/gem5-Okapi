@@ -11,7 +11,7 @@
 619.lbm_s
 620.omnetpp_s
 621.wrf_s
-623.xalancbmrandom: crng init done
+623.xalancbmk_s
 625.x264_s
 625.x264_s
 625.x264_s

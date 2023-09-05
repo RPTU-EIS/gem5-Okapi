@@ -96,7 +96,7 @@ CPU::CPU(const BaseO3CPUParams &params)
 
       freeList(name() + ".freelist", &regFile),
 
-      rob(this, params),
+      rob(this, &regFile, params),
 
       scoreboard(name() + ".scoreboard", regFile.totalNumPhysRegs()),
 
@@ -111,11 +111,34 @@ CPU::CPU(const BaseO3CPUParams &params)
                   params.backComSize + params.forwardComSize,
                   params.activity),
 
+      speculativeLoadPolicy(params.speculativeLoadPolicy),
+      threatModel(params.threatModel),
       globalSeqNum(1),
       system(params.system),
       lastRunningCycle(curCycle()),
       cpuStats(this)
 {
+    if (params.speculativeLoadPolicy ==
+        SpeculativeLoadPolicy::Okapi) {
+        std::cout << "Okapi activated" << std::endl;
+    } else if (params.speculativeLoadPolicy ==
+        SpeculativeLoadPolicy::None) {
+        std::cout << "No protection" << std::endl;
+    } else if (params.speculativeLoadPolicy ==
+        SpeculativeLoadPolicy::NaiveDelay) {
+        std::cout << "Naive Delay enabled" << std::endl;
+    }else if (params.speculativeLoadPolicy ==
+        SpeculativeLoadPolicy::EagerDelay) {
+        std::cout << "Eager Delay enabled" << std::endl;
+    } else if (params.speculativeLoadPolicy ==
+        SpeculativeLoadPolicy::STT) {
+        std::cout << "STT enabled" << std::endl;
+    }
+    if (params.threatModel == ThreatModel::Futuristic) {
+        std::cout << "Futuristic threat model" << std::endl;
+    } else if (params.threatModel == ThreatModel::Spectre) {
+        std::cout << "Spectre threat model" << std::endl;
+    }
     fatal_if(FullSystem && params.numThreads > 1,
             "SMT is not supported in O3 in full system mode currently.");
 
@@ -170,6 +193,7 @@ CPU::CPU(const BaseO3CPUParams &params)
     rename.setRenameQueue(&renameQueue);
     iew.setRenameQueue(&renameQueue);
     iew.setIEWQueue(&iewQueue);
+    iew.setROB(&rob);
     commit.setIEWQueue(&iewQueue);
     commit.setRenameQueue(&renameQueue);
 

@@ -121,6 +121,9 @@ TLB::insert(Addr vpn, const TlbEntry &entry, uint64_t pcid)
     *newEntry = entry;
     newEntry->lruSeq = nextSeq();
     newEntry->vaddr = vpn;
+    //! [Philipp Schmitz] Okapi set domain bit if a new entry is inserted
+    newEntry->inDomain = 1;
+
     if (FullSystem) {
         newEntry->trieHandle =
         trie.insert(vpn, TlbEntryTrie::MaxBits-entry.logBytes, newEntry);
@@ -136,8 +139,41 @@ TlbEntry *
 TLB::lookup(Addr va, bool update_lru)
 {
     TlbEntry *entry = trie.lookup(va);
+    //! Okapi [Philipp Schmitz] 02.08.2023
+    //! Only update LRU if it is a secure lookup
+    //TODO pass domain identifier to do a real check and not check if
+    // it is in any domain or is this even necessary?
+    if (entry && update_lru && entry->inDomain != 0) {
+        entry->lruSeq = nextSeq();
+        //TODO pass right value
+        entry->inDomain = 1;
+    }
+
+    return entry;
+}
+
+//! Okapi Philipp Schmitz 02.08.2023
+//! Only update LRU if it is a secure lookup
+//! Use this function if we store different
+//! domain IDs instead of binary decision
+TlbEntry *
+TLB::lookupDomain(Addr va, uint16_t domain, bool update_lru)
+{
+    DPRINTF(TLB, "lookup domain function\n");
+    TlbEntry *entry = trie.lookup(va);
+    if (entry) {
+        DPRINTF(TLB, "hit\n");
+        if (entry->inDomain != domain) {
+            DPRINTF(TLB, "not in domain\n");
+            return NULL;
+        }
+    }
+
+    //TODO pass domain identifier to do a real check and not check
+    //if it is in any domain or is this even necessary?
     if (entry && update_lru)
         entry->lruSeq = nextSeq();
+
     return entry;
 }
 
@@ -266,6 +302,17 @@ TLB::translateInt(bool read, RequestPtr req, ThreadContext *tc)
     } else {
         panic("Access to unrecognized internal address space %#x.\n",
                 prefix);
+    }
+}
+
+//!Okapi Philipp Schmitz 02.08.2023
+void
+TLB::flushDomainBits()
+{
+    DPRINTF(TLB, "flushDomainBits()\n");
+    for (size_t i = 0; i < size; i++) {
+        if (tlb[i].trieHandle)
+            tlb[i].inDomain = 0;
     }
 }
 
@@ -416,7 +463,15 @@ TLB::translate(const RequestPtr &req,
                 pcid = 0x000;
 
             pageAlignedVaddr = concAddrPcid(pageAlignedVaddr, pcid);
-            TlbEntry *entry = lookup(pageAlignedVaddr);
+            //!Okapi Philipp Schmitz 02.08.2023
+            //! Do lookup with domain check in case of insecure lookup
+            TlbEntry *entry = nullptr;
+            if (req->getSpeculative()) {
+                //TODO check domain id
+                entry = lookupDomain(pageAlignedVaddr, 1);
+            } else {
+                entry = lookup(pageAlignedVaddr);
+            }
 
             if (mode == BaseMMU::Read) {
                 stats.rdAccesses++;
@@ -424,46 +479,86 @@ TLB::translate(const RequestPtr &req,
                 stats.wrAccesses++;
             }
             if (!entry) {
-                DPRINTF(TLB, "Handling a TLB miss for "
-                        "address %#x at pc %#x.\n",
-                        vaddr, tc->pcState().instAddr());
-                if (mode == BaseMMU::Read) {
-                    stats.rdMisses++;
-                } else {
-                    stats.wrMisses++;
-                }
-                if (FullSystem) {
-                    Fault fault = walker->start(tc, translation, req, mode);
-                    if (timing || fault != NoFault) {
-                        // This gets ignored in atomic mode.
-                        delayedResponse = true;
-                        return fault;
-                    }
-                    entry = lookup(pageAlignedVaddr);
-                    assert(entry);
-                } else {
-                    Process *p = tc->getProcessPtr();
-                    const EmulationPageTable::Entry *pte =
-                        p->pTable->lookup(vaddr);
-                    if (!pte) {
-                        return std::make_shared<PageFault>(vaddr, true, mode,
-                                                           true, false);
+                //! Okapi Philipp Schmitz 02.08.2023
+                /**
+                 * No entry has been found
+                three possible cases:
+                 1) request is not squashable -> issue page table walk
+                 2) request is squashable + a hit in TLB but the page
+                 has not been accessed securely yet
+                 3) request is squashable + a miss in tlb
+                 * 2) and 3) can be treated the same
+                 * Maybe distinguish for statistics
+                 */
+
+                if (!req->getSpeculative()) {
+                    DPRINTF(TLB, "Handling a TLB miss for "
+                                 "address %#x at pc %#x.\n",
+                            vaddr, tc->pcState().instAddr());
+                    if (mode == BaseMMU::Read) {
+                        stats.rdMisses++;
                     } else {
-                        Addr alignedVaddr = p->pTable->pageAlign(vaddr);
-                        DPRINTF(TLB, "Mapping %#x to %#x\n", alignedVaddr,
-                                pte->paddr);
-                        entry = insert(alignedVaddr, TlbEntry(
-                                p->pTable->pid(), alignedVaddr, pte->paddr,
-                                pte->flags & EmulationPageTable::Uncacheable,
-                                pte->flags & EmulationPageTable::ReadOnly),
-                                pcid);
+                        stats.wrMisses++;
                     }
-                    DPRINTF(TLB, "Miss was serviced.\n");
+                    if (FullSystem) {
+                        req->_spec_miss = false;
+                        Fault fault = walker->start(tc, translation,
+                                                    req, mode);
+                        if (timing || fault != NoFault) {
+                            // This gets ignored in atomic mode.
+                            delayedResponse = true;
+                            DPRINTF(TLB, "Delay response for "
+                                         "address %#x at pc %#x.\n",
+                                    vaddr, tc->pcState().instAddr());
+                            return fault;
+                        }
+                        entry = lookup(pageAlignedVaddr);
+                        DPRINTF(TLB, "Lookup entry for missed "
+                                     "previously missed request"
+                                     "address %#x at pc %#x.\n",
+                                vaddr, tc->pcState().instAddr());
+                        assert(entry);
+                    } else {
+                        Process *p = tc->getProcessPtr();
+                        const EmulationPageTable::Entry *pte =
+                                p->pTable->lookup(vaddr);
+                        if (!pte) {
+                            return std::make_shared<PageFault>(vaddr,
+                                                               true, mode,
+                                                               true, false);
+                        } else {
+                            Addr alignedVaddr = p->pTable->pageAlign(vaddr);
+                            DPRINTF(TLB, "Mapping %#x to %#x\n", alignedVaddr,
+                                    pte->paddr);
+                            entry = insert(
+                                    alignedVaddr,
+                                    TlbEntry(p->pTable->pid(), alignedVaddr,
+                                             pte->paddr,
+                                             pte->flags &
+                                             EmulationPageTable::Uncacheable,
+                                             pte->flags &
+                                             EmulationPageTable::ReadOnly),
+                                             pcid);
+                        }
+                        DPRINTF(TLB, "Miss was serviced.\n");
+                    }
+                } else {
+                    //TODO distinguish 2) and 3) for stats
+                    req->_spec_miss = true;
+                    translation->markOkapiBlocked();
+                    delayedResponse = true;
+                    DPRINTF(TLB, "Delay response for "
+                                 "address %#x at pc %#x because the"
+                                 "safe access bit has not been set.\n",
+                            vaddr, tc->pcState().instAddr());
+                    return NoFault;
                 }
             }
 
             DPRINTF(TLB, "Entry found with paddr %#x, "
                     "doing protection checks.\n", entry->paddr);
+            req->_spec_miss = false;
+            delayedResponse = false;
             // Do paging protection checks.
             bool inUser = m5Reg.cpl == 3 && !(flags & CPL0FlagBit);
             CR0 cr0 = tc->readMiscRegNoEffect(misc_reg::Cr0);

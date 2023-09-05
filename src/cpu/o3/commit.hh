@@ -127,6 +127,10 @@ class Commit
     /** To probe when an instruction is squashed */
     ProbePointArg<DynInstPtr> *ppSquash;
 
+    /** [Philipp Schmitz] Okpai, add debug signal
+     * to trigger when the ROB gets stuck*/
+    int rob_stuck = 0;
+
     /** Mark the thread as processing a trap. */
     void processTrapEvent(ThreadID tid);
 
