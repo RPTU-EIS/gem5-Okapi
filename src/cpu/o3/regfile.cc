@@ -90,6 +90,8 @@ PhysRegFile::PhysRegFile(unsigned _numPhysicalIntRegs,
     for (phys_reg = 0; phys_reg < numPhysicalIntRegs; phys_reg++) {
         intRegIds.emplace_back(*reg_classes.at(IntRegClass),
                 phys_reg, flat_reg_idx++);
+        intRegTaints.emplace_back(false);
+        intRegYRoTs.emplace_back(0);
     }
 
     // The next batch of the registers are the floating-point physical
@@ -97,6 +99,8 @@ PhysRegFile::PhysRegFile(unsigned _numPhysicalIntRegs,
     for (phys_reg = 0; phys_reg < numPhysicalFloatRegs; phys_reg++) {
         floatRegIds.emplace_back(*reg_classes.at(FloatRegClass),
                 phys_reg, flat_reg_idx++);
+        floatRegTaints.emplace_back(false);
+        floatRegYRoTs.emplace_back(0);
     }
 
     // The next batch of the registers are the vector physical
@@ -104,12 +108,16 @@ PhysRegFile::PhysRegFile(unsigned _numPhysicalIntRegs,
     for (phys_reg = 0; phys_reg < numPhysicalVecRegs; phys_reg++) {
         vecRegIds.emplace_back(*reg_classes.at(VecRegClass), phys_reg,
                 flat_reg_idx++);
+        vectorRegTaints.emplace_back(false);
+        vectorRegYRoTs.emplace_back(0);
     }
     // The next batch of the registers are the vector element physical
     // registers; put them onto the vector free list.
     for (phys_reg = 0; phys_reg < numPhysicalVecElemRegs; phys_reg++) {
         vecElemIds.emplace_back(*reg_classes.at(VecElemClass), phys_reg,
                 flat_reg_idx++);
+        vecElemRegTaints.emplace_back(false);
+        vecElemRegYRoTs.emplace_back(0);
     }
 
     // The next batch of the registers are the predicate physical
@@ -117,6 +125,8 @@ PhysRegFile::PhysRegFile(unsigned _numPhysicalIntRegs,
     for (phys_reg = 0; phys_reg < numPhysicalVecPredRegs; phys_reg++) {
         vecPredRegIds.emplace_back(*reg_classes.at(VecPredRegClass), phys_reg,
                 flat_reg_idx++);
+        vecPredTaints.emplace_back(false);
+        vecPredRegYRoTs.emplace_back(0);
     }
 
     // The next batch of the registers are the matrix physical
@@ -124,6 +134,8 @@ PhysRegFile::PhysRegFile(unsigned _numPhysicalIntRegs,
     for (phys_reg = 0; phys_reg < numPhysicalMatRegs; phys_reg++) {
         matRegIds.emplace_back(*reg_classes.at(MatRegClass), phys_reg,
                 flat_reg_idx++);
+        matRegTaints.emplace_back(false);
+        matRegYRoTs.emplace_back(0);
     }
 
     // The rest of the registers are the condition-code physical
@@ -131,12 +143,16 @@ PhysRegFile::PhysRegFile(unsigned _numPhysicalIntRegs,
     for (phys_reg = 0; phys_reg < numPhysicalCCRegs; phys_reg++) {
         ccRegIds.emplace_back(*reg_classes.at(CCRegClass), phys_reg,
                 flat_reg_idx++);
+        ccRegTaints.emplace_back(false);
+        ccRegYRoTs.emplace_back(0);
     }
 
     // Misc regs have a fixed mapping but still need PhysRegIds.
     for (phys_reg = 0; phys_reg < reg_classes.at(MiscRegClass)->numRegs();
             phys_reg++) {
         miscRegIds.emplace_back(*reg_classes.at(MiscRegClass), phys_reg, 0);
+        miscRegTaints.emplace_back(false);
+        miscRegYRoTs.emplace_back(0);
     }
 }
 

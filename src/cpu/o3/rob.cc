@@ -44,6 +44,7 @@
 
 #include "base/logging.hh"
 #include "cpu/o3/dyn_inst.hh"
+#include "cpu/o3/dyn_inst_ptr.hh"
 #include "cpu/o3/limits.hh"
 #include "debug/Fetch.hh"
 #include "debug/ROB.hh"
@@ -55,9 +56,10 @@ namespace gem5
 namespace o3
 {
 
-ROB::ROB(CPU *_cpu, const BaseO3CPUParams &params)
+ROB::ROB(CPU *_cpu, PhysRegFile* _regfile, const BaseO3CPUParams &params)
     : robPolicy(params.smtROBPolicy),
       cpu(_cpu),
+      regFile(_regfile),
       numEntries(params.numROBEntries),
       squashWidth(params.squashWidth),
       numInstsInROB(0),
@@ -200,7 +202,9 @@ ROB::insertInst(const DynInstPtr &inst)
 
     stats.writes++;
 
-    DPRINTF(ROB, "Adding inst PC %s to the ROB.\n", inst->pcState());
+    DPRINTF(ROB, "Adding inst PC %s "
+                 "[sn:%llu] to the ROB.\n",
+                 inst->pcState(), inst->seqNum);
 
     assert(numInstsInROB != numEntries);
 
@@ -220,6 +224,82 @@ ROB::insertInst(const DynInstPtr &inst)
     tail--;
 
     inst->setInROB();
+
+    if (inst->isLoad()) {
+        stats.loads++;
+        if (cpu->getSpeculativeLoadPolicy() ==
+        SpeculativeLoadPolicy::NaiveDelay) {
+            DPRINTF(ROB, "Marking load inst PC %s "
+                         "[sn:%llu] as unsafe.\n",
+                         inst->pcState(), inst->seqNum);
+            inst->setUnsafeLoad();
+            if (inst == (*head)) {
+                inst->clearUnsafeLoad();
+                DPRINTF(ROB, "Immediately clear unsafe load inst PC "
+                             "%s [sn:%llu] because it is at head.\n",
+                             inst->pcState(), inst->seqNum);
+            }
+        }
+        else if (cpu->getSpeculativeLoadPolicy() ==
+        SpeculativeLoadPolicy::EagerDelay) {
+            if (instIsShadowed(inst, tid)) {
+                DPRINTF(ROB, "Marking load inst PC %s "
+                             "[sn:%llu] as unsafe.\n",
+                             inst->pcState(), inst->seqNum);
+                inst->setUnsafeLoad();
+                inst->setShadowed();
+            }
+        }  else if (cpu->getSpeculativeLoadPolicy() ==
+           SpeculativeLoadPolicy::Okapi) {
+            if (instIsShadowed(inst, tid)) {
+                DPRINTF(ROB, "Marking load inst PC %s "
+                             "[sn:%llu] as unsafe under Okapi.\n",
+                             inst->pcState(), inst->seqNum);
+                inst->setUnsafeLoad();
+                inst->setOkapiLoad();
+                stats.okapi_loads++;
+                inst->setShadowed();
+            }
+        }
+        else if (cpu->getSpeculativeLoadPolicy() ==
+        SpeculativeLoadPolicy::STT) {
+            if (instIsShadowed(inst, tid)) {
+                /** [Schmitz, STT] if the instruction is
+                 * a shadowed load -> initialize the taint and the YRoT */
+                DPRINTF(ROB, "Initialize taint for load "
+                             "inst PC %s [sn:%llu].\n",
+                             inst->pcState(), inst->seqNum);
+                stats.taints++;
+                inst->isDestTainted(true);
+                taintDestinations(inst, inst->seqNum);
+            }
+        }
+    }
+
+    if (cpu->getSpeculativeLoadPolicy() == SpeculativeLoadPolicy::STT) {
+        //propagate taint
+        std::set<InstSeqNum> yRoT_candidates;
+        bool tainted = false;
+        for (int i = 0; i < inst->numSrcRegs(); i++) {
+            if (inst->srcRegIdx(i).index() == 16)
+                // exclude zero register (zero register cannot be tainted)
+                continue;
+            if (regFile->getTaint(inst->renamedSrcIdx(i))) {
+                tainted = true;
+                //mark inst to be blocked if >= 1 argument is tainted
+                inst->isArgsTainted(true);
+                yRoT_candidates.emplace(
+                        regFile->getYRoT(inst->renamedSrcIdx(i)));
+            }
+        }
+
+        if (tainted) {
+            if (inst->isCondCtrl()) stats.branches_with_tainted_args++;
+            //if the instruction operates with
+            // tainted arguments taint the destinations as well
+            taintDestinations(inst, *(yRoT_candidates.rbegin()));
+        }
+    }
 
     ++numInstsInROB;
     ++threadEntries[tid];
@@ -249,6 +329,13 @@ ROB::retireHead(ThreadID tid)
             "instruction PC %s, [sn:%llu]\n", tid, head_inst->pcState(),
             head_inst->seqNum);
 
+    if (cpu->getSpeculativeLoadPolicy() == SpeculativeLoadPolicy::STT) {
+        //!Untaint retiring YRoTs ...
+        std::vector<InstSeqNum> unshadowedYRoTs;
+        unshadowedYRoTs.push_back(head_inst->seqNum);
+        regFile->clearYRoTsAndTaints(unshadowedYRoTs);
+    }
+
     --numInstsInROB;
     --threadEntries[tid];
 
@@ -262,6 +349,107 @@ ROB::retireHead(ThreadID tid)
     // retired is the only instruction in the ROB; otherwise the tail
     // iterator will become invalidated.
     cpu->removeFrontInst(head_inst);
+}
+
+std::optional<ROB::Shadow>
+ROB::instCastsShadow(DynInstPtr inst)
+{
+    // C-Shadow
+    if (inst->isControl() && !(inst->isExecuted() && !inst->mispredicted())) {
+        return {{Shadow::Type::C}};
+    }
+
+    // Only cast C-Shadows in relaxed policy
+    if (cpu->getThreatModel() == ThreatModel::Spectre)
+        return std::nullopt;
+
+    // D-Shadow
+    if (inst->isStore() && !inst->translationCompleted()) {
+        return {{Shadow::Type::D}};
+    }
+
+    // E-Shadow
+    bool isMemoryAccessThatMightFail =
+            (inst->isLoad() || inst->isStore()) &&
+            !inst->translationCompleted();
+    if (!inst->isExecuted() && (isMemoryAccessThatMightFail ||
+                                inst->isSyscall() || inst->isFloating())) {
+        return {{Shadow::Type::E}};
+    }
+
+    // M-Shadow
+    if (!inst->isExecuted() && inst->isLoad()) {
+        return {{Shadow::Type::M}};
+    }
+
+    return std::nullopt;
+}
+
+bool
+ROB::instIsShadowed(DynInstPtr inst, ThreadID tid)
+{
+    bool shadowed = false;
+    for (auto instIt : instList[tid])
+    {
+        auto shadow = instCastsShadow(instIt);
+        if (shadow) {
+            DPRINTF(ROB, "[tid:%i] Instruction PC %s "
+                         "[sn:%llu] casts %s-Shadow\n",
+                         tid, instIt->pcState(),
+                         instIt->seqNum, shadow->toString());
+
+            // Don't cast shadow on itself
+            if (instIt != inst) {
+                shadowed = true;
+                break;
+            }
+        }
+    }
+    return shadowed;
+}
+
+void
+ROB::taintDestinations(DynInstPtr inst, InstSeqNum yRoT)
+{
+    inst->isDestTainted(true);
+    for (int i = 0; i < inst->numDestRegs(); i++) {
+        regFile->setTaint(inst->renamedDestIdx(i), true);
+        regFile->setYRoT(inst->renamedDestIdx(i), yRoT);
+    }
+}
+
+std::vector<DynInstPtr>
+ROB::updateShadowedInsts(ThreadID tid)
+{
+    DPRINTF(ROB, "[tid:%i] Try to unshadow instructions.\n", tid);
+    std::vector<DynInstPtr> unshadowedInsts;
+
+    for (auto instIt : instList[tid])
+    {
+        // Don't cast shadow on ROB head
+        if (instIt != instList[tid].front()) {
+            auto shadow = instCastsShadow(instIt);
+            if (shadow) {
+                DPRINTF(ROB, "[tid:%i] Instruction PC %s"
+                             " [sn:%llu] casts %s-Shadow\n",
+                             tid, instIt->pcState(),
+                             instIt->seqNum, shadow->toString());
+
+                break;
+            }
+        }
+
+        if (instIt->isUnsafeLoad())
+        {
+            DPRINTF(ROB, "Unshadow inst PC %s "
+                         "[sn:%llu].\n",
+                         instIt->pcState(), instIt->seqNum);
+            instIt->clearUnsafeLoad();
+            unshadowedInsts.push_back(instIt);
+        }
+    }
+
+    return unshadowedInsts;
 }
 
 bool
@@ -353,6 +541,29 @@ ROB::doSquash(ThreadID tid)
 
         (*squashIt[tid])->setCanCommit();
 
+        auto squashed_inst = (*squashIt[tid]);
+        if (cpu->getSpeculativeLoadPolicy() == SpeculativeLoadPolicy::STT) {
+            for (int i = 0; i < squashed_inst->numDestRegs(); i++) {
+                // exclude zero register (zero register cannot be tainted)
+                if (squashed_inst->destRegIdx(i).index() == 16)
+                    continue;
+                //!Untaint squashed YRoTs ...
+                //! only untaint if the yrot of the
+                //! dest reg is still the instruction ID.
+                if (regFile->getTaint(squashed_inst->renamedDestIdx(i))) {
+                    if (regFile->getYRoT(squashed_inst->renamedDestIdx(i)) ==
+                      squashed_inst->seqNum) {
+                        regFile->setTaint(
+                                squashed_inst->renamedSrcIdx(i), false);
+                        regFile->setYRoT(squashed_inst->renamedSrcIdx(i), 0);
+                    }
+                }
+
+            }
+            std::vector<InstSeqNum> unshadowedYRoTs;
+            unshadowedYRoTs.push_back(squashed_inst->seqNum);
+            regFile->clearYRoTsAndTaints(unshadowedYRoTs);
+        }
 
         if (squashIt[tid] == instList[tid].begin()) {
             DPRINTF(ROB, "Reached head of instruction list while "
@@ -428,6 +639,18 @@ ROB::updateHead()
 
     if (first_valid) {
         head = instList[0].end();
+    }
+
+    if ((*head)) {
+        DPRINTF(ROB, "head inst is [sn:%llu]\n",
+                (*head)->seqNum);
+        if (cpu->getSpeculativeLoadPolicy() ==
+          SpeculativeLoadPolicy::NaiveDelay) {
+            (*head)->clearUnsafeLoad();
+            DPRINTF(ROB, "Clear unsafe load bit for "
+                         "load instruction at head [sn:%llu]\n",
+                         (*head)->seqNum);
+        }
     }
 
 }
@@ -526,7 +749,15 @@ ROB::ROBStats::ROBStats(statistics::Group *parent)
     ADD_STAT(reads, statistics::units::Count::get(),
         "The number of ROB reads"),
     ADD_STAT(writes, statistics::units::Count::get(),
-        "The number of ROB writes")
+        "The number of ROB writes"),
+    ADD_STAT(loads, statistics::units::Count::get(),
+             "The number of loads in the ROB"),
+    ADD_STAT(okapi_loads, statistics::units::Count::get(),
+             "The number of unsafe loads under Okapi"),
+    ADD_STAT(taints, statistics::units::Count::get(),
+             "The number of taints initialized in the ROB"),
+    ADD_STAT(branches_with_tainted_args, statistics::units::Count::get(),
+             "The number of branches with tainted args")
 {
 }
 

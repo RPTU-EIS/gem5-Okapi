@@ -75,6 +75,9 @@ namespace X86ISA
 
         TlbEntry *lookup(Addr va, bool update_lru = true);
 
+        TlbEntry *lookupDomain(Addr va, uint16_t domain,
+                               bool update_lru = true);
+
         void setConfigAddress(uint32_t addr);
         //concatenate Page Addr and pcid
         inline Addr concAddrPcid(Addr vpn, uint64_t pcid)
@@ -124,6 +127,12 @@ namespace X86ISA
         Fault translate(const RequestPtr &req, ThreadContext *tc,
                 BaseMMU::Translation *translation, BaseMMU::Mode mode,
                 bool &delayedResponse, bool timing);
+
+        //!Okapi Philipp Schmitz 02.08.2023
+        //!Function to clear the Domain information
+        //TODO maybe make it not purely virtual in
+        // order to compile other ISAs without Okapi
+        void flushDomainBits() override;
 
       public:
 

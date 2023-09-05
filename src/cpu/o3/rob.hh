@@ -41,6 +41,7 @@
 #ifndef __CPU_O3_ROB_HH__
 #define __CPU_O3_ROB_HH__
 
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -50,6 +51,7 @@
 #include "cpu/inst_seq.hh"
 #include "cpu/o3/dyn_inst_ptr.hh"
 #include "cpu/o3/limits.hh"
+#include "cpu/o3/regfile.hh"
 #include "cpu/reg_class.hh"
 #include "enums/SMTQueuePolicy.hh"
 
@@ -94,7 +96,7 @@ class ROB
      *  @param _cpu   The cpu object pointer.
      *  @param params The cpu params including several ROB-specific parameters.
      */
-    ROB(CPU *_cpu, const BaseO3CPUParams &params);
+    ROB(CPU *_cpu, PhysRegFile* _regfile, const BaseO3CPUParams &params);
 
     std::string name() const;
 
@@ -152,6 +154,39 @@ class ROB
      *  ROB.
      */
     void retireHead(ThreadID tid);
+
+    /** Calculates the shadows caused by speculative
+     * instructions and marks loads as unsafe. */
+    std::vector<DynInstPtr> updateShadowedInsts(ThreadID tid);
+
+    struct Shadow
+    {
+        enum class Type
+        {
+            C, D, E, M
+        } type;
+
+        std::string toString() const {
+            switch (type) {
+                case Type::C: return "C";
+                case Type::D: return "D";
+                case Type::E: return "E";
+                case Type::M: return "M";
+            }
+            return {};
+        }
+    };
+
+    /** Returns the shadow the instruction casts */
+    std::optional<Shadow> instCastsShadow(DynInstPtr inst);
+
+
+    /** Returns true if the instruction is shadowed */
+    bool instIsShadowed(DynInstPtr inst, ThreadID tid);
+
+    /** Taints the destination registers of inst with yRoT */
+    void taintDestinations(DynInstPtr inst, InstSeqNum yRoT);
+
 
     /** Is the oldest instruction across all threads ready. */
 //    bool isHeadReady();
@@ -273,6 +308,9 @@ class ROB
     /** Pointer to the CPU. */
     CPU *cpu;
 
+    /** Pointer to the register file. */
+    PhysRegFile* regFile;
+
     /** Active Threads in CPU */
     std::list<ThreadID> *activeThreads;
 
@@ -338,6 +376,14 @@ class ROB
         statistics::Scalar reads;
         // The number of rob_writes
         statistics::Scalar writes;
+
+        statistics::Scalar loads;
+
+        statistics::Scalar okapi_loads;
+
+        statistics::Scalar taints;
+
+        statistics::Scalar branches_with_tainted_args;
     } stats;
 };
 

@@ -105,6 +105,11 @@ class BaseTLB : public SimObject
     virtual void flushAll() = 0;
 
     /**
+    * [Philipp Schmitz] Okapi, reset the safe access bits
+    */
+    virtual void flushDomainBits() = 0;
+
+    /**
      * Take over from an old tlb context
      */
     virtual void takeOverFrom(BaseTLB *otlb) = 0;
