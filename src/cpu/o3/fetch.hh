@@ -439,6 +439,7 @@ class Fetch
         bool drain;
     };
 
+    int lfenceCounter = 0;
     /** Tracks which stages are telling fetch to stall. */
     Stalls stalls[MaxThreads];
 
@@ -485,6 +486,9 @@ class Fetch
 
     /** The PC of the first instruction loaded into the fetch buffer. */
     Addr fetchBufferPC[MaxThreads];
+
+    /** The PC of the first instruction loaded into the fetch buffer. */
+    Addr instructionPageBaseAddress[MaxThreads];
 
     /** The size of the fetch queue in micro-ops */
     unsigned fetchQueueSize;
@@ -541,6 +545,8 @@ class Fetch
         statistics::Scalar squashCycles;
         /** Stat for total number of cycles spent waiting for translation */
         statistics::Scalar tlbCycles;
+        /** Total number of priviliged ITLB requests. */
+        statistics::Scalar privRequests;
         /** Stat for total number of cycles
          *  spent blocked due to other stages in
          * the pipeline.

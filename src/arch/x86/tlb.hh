@@ -110,6 +110,8 @@ namespace X86ISA
         TlbEntryTrie trie;
         uint64_t lruSeq;
 
+        bool user = true;
+        int ticktickboom = 2;
         AddrRange m5opRange;
 
         struct TlbStats : public statistics::Group
@@ -119,7 +121,11 @@ namespace X86ISA
             statistics::Scalar rdAccesses;
             statistics::Scalar wrAccesses;
             statistics::Scalar rdMisses;
+            statistics::Scalar tlbEntries;
+            statistics::Scalar specRdMisses;
             statistics::Scalar wrMisses;
+            statistics::Scalar privChange;
+            statistics::Scalar bitsReset;
         } stats;
 
         Fault translateInt(bool read, RequestPtr req, ThreadContext *tc);

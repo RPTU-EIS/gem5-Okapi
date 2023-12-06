@@ -152,6 +152,12 @@ let {{
         def control_indirect(self):
             self.control_indirect = True
 
+        def okapi_reset(self):
+            self.okapi_reset = True
+
+        def is_syscall(self):
+                    self.is_syscall = True
+
         def __init__(self, name):
             super().__init__(name)
             self.directives = {
@@ -163,7 +169,9 @@ let {{
                 "function_call" : self.function_call,
                 "function_return" : self.function_return,
                 "control_direct" : self.control_direct,
-                "control_indirect" : self.control_indirect
+                "control_indirect" : self.control_indirect,
+                "okapi_reset" : self.okapi_reset,
+                "is_syscall" : self.is_syscall
             }
             self.declared = False
             self.adjust_env = ""
@@ -184,6 +192,8 @@ let {{
             self.function_return = False
             self.control_direct = False
             self.control_indirect = False
+            self.okapi_reset = False
+            self.is_syscall = False
 
         def getAllocator(self, env):
             return "new x86_macroop::%s(machInst, %s)" % \
@@ -212,6 +222,13 @@ let {{
             micropc = 0
             for op in self.microops:
                 flags = ["IsMicroop"]
+
+                if self.okapi_reset:
+                    flags.append("IsOkapiReset")
+
+                if self.is_syscall:
+                   flags.append("IsSyscall")
+
                 if micropc == 0:
                     flags.append("IsFirstMicroop")
 

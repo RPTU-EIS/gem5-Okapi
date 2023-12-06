@@ -801,6 +801,9 @@ class BaseCPU : public ClockedObject
         /* number of load instructions */
         statistics::Scalar numLoadInsts;
 
+        /* number of okapi load instructions */
+        statistics::Scalar numOkapiLoadInsts;
+
         /* Number of store instructions */
         statistics::Scalar numStoreInsts;
 

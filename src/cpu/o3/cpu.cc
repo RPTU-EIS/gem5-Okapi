@@ -52,6 +52,7 @@
 #include "cpu/thread_context.hh"
 #include "debug/Activity.hh"
 #include "debug/Drain.hh"
+#include "debug/Misc.hh"
 #include "debug/O3CPU.hh"
 #include "debug/Quiesce.hh"
 #include "enums/MemoryMode.hh"
@@ -110,7 +111,7 @@ CPU::CPU(const BaseO3CPUParams &params)
       activityRec(name(), NumStages,
                   params.backComSize + params.forwardComSize,
                   params.activity),
-
+      okapiVariation(params.okapiVariation),
       speculativeLoadPolicy(params.speculativeLoadPolicy),
       threatModel(params.threatModel),
       globalSeqNum(1),
@@ -138,7 +139,20 @@ CPU::CPU(const BaseO3CPUParams &params)
         std::cout << "Futuristic threat model" << std::endl;
     } else if (params.threatModel == ThreatModel::Spectre) {
         std::cout << "Spectre threat model" << std::endl;
+    } else if (params.threatModel == ThreatModel::Naive) {
+        std::cout << "Naive threat model" << std::endl;
     }
+    if (params.speculativeLoadPolicy ==
+        SpeculativeLoadPolicy::Okapi) {
+        if (params.okapiVariation == OkapiVariation::v1) {
+            std::cout << "Okapi v1" << std::endl;
+        } else if (params.okapiVariation == OkapiVariation::v2) {
+            std::cout << "Okapi v2" << std::endl;
+        } else if (params.okapiVariation == OkapiVariation::opt) {
+            std::cout << "Okapi opt" << std::endl;
+        }
+    }
+
     fatal_if(FullSystem && params.numThreads > 1,
             "SMT is not supported in O3 in full system mode currently.");
 
@@ -951,14 +965,65 @@ CPU::verifyMemoryMode() const
 RegVal
 CPU::readMiscRegNoEffect(int misc_reg, ThreadID tid) const
 {
-    return isa[tid]->readMiscRegNoEffect(misc_reg);
+    auto val = isa[tid]->readMiscRegNoEffect(misc_reg);
+    //DPRINTF(Misc, "Reading %i from misc reg %i no effect\n", val, misc_reg);
+    return val;
 }
 
+/** Output for timing array measurements for leakage gadgets*/
 RegVal
 CPU::readMiscReg(int misc_reg, ThreadID tid)
 {
     executeStats[tid]->numMiscRegReads++;
-    return isa[tid]->readMiscReg(misc_reg);
+
+    auto val = isa[tid]->readMiscReg(misc_reg);
+    if ((rob.lfence_en || read_tsc) && misc_reg == 26) {
+        if (!read_tsc) {
+            read_tsc = true;
+            tsc = val;
+        }
+        else {
+            read_tsc = false;
+            tsc = val - tsc;
+
+            std::cout << "ROB head at: " << std::hex;
+            std::cout << rob.readHeadInst(tid)->pcState().instAddr();
+            std::cout << " [sn:" << std::dec << rob.readHeadInst(tid)->seqNum;
+            std::cout<< "]" << ": " << std::dec << tsc;
+            std::cout << " cycles" << std::endl;
+        }
+
+        if (!read_tsc) rob.lfence_en = false;
+        std::cout << read_tsc << " " << rob.lfence_en << std::endl;
+    }
+
+    //DPRINTF(Misc, "Reading %i from misc reg %i\n", val, misc_reg);
+    return val;
+}
+/** Output for timing array measurements for leakage gadgets*/
+RegVal
+CPU::readMiscReg(int misc_reg, ThreadID tid, const DynInstPtr& inst) {
+    executeStats[tid]->numMiscRegReads++;
+
+    auto val = isa[tid]->readMiscReg(misc_reg);
+    if ((rob.lfence_en || read_tsc) && misc_reg == 26) {
+        if (!read_tsc) {
+            read_tsc = true;
+            tsc = val;
+        }
+        else {
+            read_tsc = false;
+            tsc = val - tsc;
+            std::cout << "at PC: ";
+            std::cout << std::hex << inst->pcState().instAddr();
+            std::cout << std::dec << ": "  << tsc << " cycles" << std::endl;
+        }
+
+        if (!read_tsc) rob.lfence_en = false;
+        std::cout << read_tsc << " " << rob.lfence_en << std::endl;
+    }
+
+    return val;
 }
 
 void
@@ -1264,6 +1329,17 @@ CPU::removeInstsUntil(const InstSeqNum &seq_num, ThreadID tid)
             break;
     }
 }
+
+DynInstPtr
+CPU::getROBHeadInst() const {
+    return rob.head->get();
+}
+
+int
+CPU::getROBCnt() const {
+    return rob.numInstsInROB;
+}
+
 
 void
 CPU::squashInstIt(const ListIt &instIt, ThreadID tid)

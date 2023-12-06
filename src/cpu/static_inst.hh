@@ -205,9 +205,14 @@ class StaticInst : public RefCounted, public StaticInstFlags
     }
     //@}
 
+    bool isOkapiReset() const { return flags[IsOkapiReset]; }
+    bool isLFence() const { return flags[IsLFence]; }
+    bool isMFence() const { return flags[IsMFence]; }
     void setFirstMicroop() { flags[IsFirstMicroop] = true; }
     void setLastMicroop() { flags[IsLastMicroop] = true; }
     void setDelayedCommit() { flags[IsDelayedCommit] = true; }
+    void setOkapiReset() { flags[IsOkapiReset] = true; }
+    void setLFence() { flags[IsLFence] = true; }
     void setFlag(Flags f) { flags[f] = true; }
 
     /// Operation class.  Used to select appropriate function unit in issue.

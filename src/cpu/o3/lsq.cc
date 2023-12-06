@@ -242,6 +242,20 @@ LSQ::executeLoad(const DynInstPtr &inst)
 }
 
 Fault
+LSQ::executeOkapiReset(const DynInstPtr &inst) {
+    ThreadID tid = inst->threadNumber;
+    //TODO build request to TLB that does it
+    //right now it executes at that tick
+    //could build a "real" request to
+    // the TLB but I think it should be doable like this
+    //since we execute at head and
+    // TLB should have some spare time
+    thread[tid].getMMUPtr()->resetOkapiBits();
+    return NoFault;
+}
+
+
+Fault
 LSQ::executeStore(const DynInstPtr &inst)
 {
     ThreadID tid = inst->threadNumber;

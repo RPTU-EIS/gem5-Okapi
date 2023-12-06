@@ -703,6 +703,9 @@ class LSQ
     /** Executes a store. */
     Fault executeStore(const DynInstPtr &inst);
 
+    /** Executes an Okapi Reset. */
+    Fault executeOkapiReset(const DynInstPtr &inst);
+
     /**
      * Commits loads up until the given sequence number for a specific thread.
      */

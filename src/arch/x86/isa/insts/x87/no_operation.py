@@ -34,5 +34,9 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 microcode = """
-# FNOP
+def macroop FNOP
+{
+    .okapi_reset
+    fault "NoFault"
+};
 """

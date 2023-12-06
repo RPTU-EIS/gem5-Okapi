@@ -114,6 +114,10 @@ BaseMMU::translateTiming(const RequestPtr &req, ThreadContext *tc,
     return getTlb(mode)->translateTiming(req, tc, translation, mode);
 }
 
+void BaseMMU::resetOkapiBits() {
+    return dtb->flushDomainBits();
+}
+
 Fault
 BaseMMU::translateFunctional(const RequestPtr &req, ThreadContext *tc,
                              BaseMMU::Mode mode)

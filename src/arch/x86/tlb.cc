@@ -111,12 +111,15 @@ TLB::insert(Addr vpn, const TlbEntry &entry, uint64_t pcid)
         assert(newEntry->vaddr == vpn);
         return newEntry;
     }
-
+    //std::cout << "INSERT: " << std::endl;
+    //std::cout << "VPN: " << std::hex << vpn << std::endl;
     if (freeList.empty())
         evictLRU();
 
     newEntry = freeList.front();
     freeList.pop_front();
+
+    stats.tlbEntries++;
 
     *newEntry = entry;
     newEntry->lruSeq = nextSeq();
@@ -141,8 +144,6 @@ TLB::lookup(Addr va, bool update_lru)
     TlbEntry *entry = trie.lookup(va);
     //! Okapi [Philipp Schmitz] 02.08.2023
     //! Only update LRU if it is a secure lookup
-    //TODO pass domain identifier to do a real check and not check if
-    // it is in any domain or is this even necessary?
     if (entry && update_lru && entry->inDomain != 0) {
         entry->lruSeq = nextSeq();
         //TODO pass right value
@@ -180,6 +181,7 @@ TLB::lookupDomain(Addr va, uint16_t domain, bool update_lru)
 void
 TLB::flushAll()
 {
+    std::cout << "flush All" << std::endl;
     DPRINTF(TLB, "Invalidating all entries.\n");
     for (unsigned i = 0; i < size; i++) {
         if (tlb[i].trieHandle) {
@@ -311,8 +313,12 @@ TLB::flushDomainBits()
 {
     DPRINTF(TLB, "flushDomainBits()\n");
     for (size_t i = 0; i < size; i++) {
-        if (tlb[i].trieHandle)
+        if (tlb[i].trieHandle) {
+            if (tlb[i].inDomain == 1) {
+                stats.bitsReset++;
+            }
             tlb[i].inDomain = 0;
+        }
     }
 }
 
@@ -466,6 +472,7 @@ TLB::translate(const RequestPtr &req,
             //!Okapi Philipp Schmitz 02.08.2023
             //! Do lookup with domain check in case of insecure lookup
             TlbEntry *entry = nullptr;
+
             if (req->getSpeculative()) {
                 //TODO check domain id
                 entry = lookupDomain(pageAlignedVaddr, 1);
@@ -544,6 +551,7 @@ TLB::translate(const RequestPtr &req,
                     }
                 } else {
                     //TODO distinguish 2) and 3) for stats
+                    if (mode == BaseMMU::Read) stats.specRdMisses++;
                     req->_spec_miss = true;
                     translation->markOkapiBlocked();
                     delayedResponse = true;
@@ -561,6 +569,20 @@ TLB::translate(const RequestPtr &req,
             delayedResponse = false;
             // Do paging protection checks.
             bool inUser = m5Reg.cpl == 3 && !(flags & CPL0FlagBit);
+
+            if (user && !inUser) {
+                user = false;
+                stats.privChange++;
+                flushDomainBits();
+                DPRINTF(TLB, "privilege change from User to not User\n");
+                //ticktickboom--;
+            } else if (!user && inUser) {
+                stats.privChange++;
+                flushDomainBits();
+                user = true;
+                DPRINTF(TLB, "privilege change from not User to User\n");
+
+            }
             CR0 cr0 = tc->readMiscRegNoEffect(misc_reg::Cr0);
             bool badWrite = (!entry->writable && (inUser || cr0.wp));
             if ((inUser && !entry->user) ||
@@ -580,6 +602,11 @@ TLB::translate(const RequestPtr &req,
 
             Addr paddr = entry->paddr | (vaddr & mask(entry->logBytes));
             DPRINTF(TLB, "Translated %#x -> %#x.\n", vaddr, paddr);
+            DPRINTF(TLB, "Safe-access-bits was %s now",
+                    "set to true",
+                    entry->inDomain);
+            entry->inDomain = 1;
+
             req->setPaddr(paddr);
             if (entry->uncacheable)
                 req->setFlags(Request::UNCACHEABLE | Request::STRICT_ORDER);
@@ -679,8 +706,16 @@ TLB::TlbStats::TlbStats(statistics::Group *parent)
              "TLB accesses on write requests"),
     ADD_STAT(rdMisses, statistics::units::Count::get(),
              "TLB misses on read requests"),
+    ADD_STAT(specRdMisses, statistics::units::Count::get(),
+             "speculative TLB misses on read requests"),
     ADD_STAT(wrMisses, statistics::units::Count::get(),
-             "TLB misses on write requests")
+             "TLB misses on write requests"),
+    ADD_STAT(tlbEntries, statistics::units::Count::get(),
+             "Number of used entries"),
+    ADD_STAT(privChange, statistics::units::Count::get(),
+             "Number of privilege changes"),
+    ADD_STAT(bitsReset, statistics::units::Count::get(),
+             "Number of bits that have been reset")
 {
 }
 

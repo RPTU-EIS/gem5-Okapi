@@ -100,4 +100,7 @@ class StaticInstFlags(Enum):
         "IsHtmStop",  # Stops (commits) a HTM transaction
         "IsHtmCancel",  # Explicitely aborts a HTM transaction
         "IsInvalid",  # An invalid instruction
+        "IsOkapiReset",  # FNOP is re-used to reset Okapi bits
+        "IsLFence",  # Inst is x86 LFence
+        "IsMFence",  # Inst is x86 MFence
     ]

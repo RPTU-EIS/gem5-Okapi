@@ -47,6 +47,7 @@ TestMemClass = Simulation.setMemClass(args)
 cpu.numThreads = 1
 futureclass.speculativeLoadPolicy = args.speculativeLoadPolicy
 futureclass.threatModel = args.threatModel
+futureclass.okapiVariation = args.okapiVariation
 print("cpu")
 print(cpu)
 if args.full_system:

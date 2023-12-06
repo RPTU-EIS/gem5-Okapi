@@ -47,6 +47,7 @@
 #include "cpu/o3/dyn_inst_ptr.hh"
 #include "cpu/o3/limits.hh"
 #include "debug/Fetch.hh"
+#include "debug/O3PipeView.hh"
 #include "debug/ROB.hh"
 #include "params/BaseO3CPU.hh"
 
@@ -202,9 +203,30 @@ ROB::insertInst(const DynInstPtr &inst)
 
     stats.writes++;
 
+    if (inst->isWriteBarrier() && inst->isReadBarrier()) {
+        mfence = true;
+        lfence_en = false;
+    } else if (inst->isReadBarrier() && mfence) {
+        lfence_en = true;
+        mfence = false;
+    }
+
+
+
+    if (inst->isSyscall()) {
+        stats.syscalls++;
+    }
+
     DPRINTF(ROB, "Adding inst PC %s "
                  "[sn:%llu] to the ROB.\n",
                  inst->pcState(), inst->seqNum);
+
+    if (inst->isOkapiReset()) {
+        DPRINTF(ROB, "Okapi reset encountered inst PC %s "
+                     "[sn:%llu].\n",
+                inst->pcState(), inst->seqNum);
+    }
+
 
     assert(numInstsInROB != numEntries);
 
@@ -251,15 +273,27 @@ ROB::insertInst(const DynInstPtr &inst)
             }
         }  else if (cpu->getSpeculativeLoadPolicy() ==
            SpeculativeLoadPolicy::Okapi) {
+            olderOkapiReset(inst, tid);
             if (instIsShadowed(inst, tid)) {
                 DPRINTF(ROB, "Marking load inst PC %s "
                              "[sn:%llu] as unsafe under Okapi.\n",
                              inst->pcState(), inst->seqNum);
                 inst->setUnsafeLoad();
                 inst->setOkapiLoad();
-                stats.okapi_loads++;
+                stats.okapiV1Loads++;
                 inst->setShadowed();
             }
+            if (instIsV2Vulnerability(inst, tid)) {
+                DPRINTF(ROB, "Marking load inst PC %s "
+                             "[sn:%llu] as v2 unsafe under Okapi.\n",
+                        inst->pcState(), inst->seqNum);
+                inst->setUnsafeLoad();
+                inst->setOkapiV2Load();
+                inst->setShadowed();
+                stats.okapiV2Loads++;
+            }
+            if (inst->isOkapiV2Load() && !inst->isOkapiLoad()) assert (0);
+            if (inst->isUnsafeLoad()) stats.okapiLoads++;
         }
         else if (cpu->getSpeculativeLoadPolicy() ==
         SpeculativeLoadPolicy::STT) {
@@ -297,6 +331,10 @@ ROB::insertInst(const DynInstPtr &inst)
             if (inst->isCondCtrl()) stats.branches_with_tainted_args++;
             //if the instruction operates with
             // tainted arguments taint the destinations as well
+            DPRINTF(ROB, "Propagate taint for "
+                         "inst PC %s [sn:%llu] with yRoT %llu.\n",
+                    inst->pcState(), inst->seqNum,
+                    *(yRoT_candidates.rbegin()));
             taintDestinations(inst, *(yRoT_candidates.rbegin()));
         }
     }
@@ -352,7 +390,7 @@ ROB::retireHead(ThreadID tid)
 }
 
 std::optional<ROB::Shadow>
-ROB::instCastsShadow(DynInstPtr inst)
+ROB::instCastsShadow(const DynInstPtr& inst, bool v2)
 {
     // C-Shadow
     if (inst->isControl() && !(inst->isExecuted() && !inst->mispredicted())) {
@@ -360,7 +398,7 @@ ROB::instCastsShadow(DynInstPtr inst)
     }
 
     // Only cast C-Shadows in relaxed policy
-    if (cpu->getThreatModel() == ThreatModel::Spectre)
+    if ((cpu->getThreatModel() == ThreatModel::Spectre) || v2)
         return std::nullopt;
 
     // D-Shadow
@@ -385,13 +423,27 @@ ROB::instCastsShadow(DynInstPtr inst)
     return std::nullopt;
 }
 
+std::optional<ROB::Shadow>
+ROB::instCastsV2Shadow(DynInstPtr inst)
+{
+    // C-Shadow
+    if (inst->isV2Suspicious() &&
+        !(inst->isExecuted() && !inst->mispredicted())) {
+        return {{Shadow::Type::V2}};
+    }
+    return std::nullopt;
+}
+
 bool
-ROB::instIsShadowed(DynInstPtr inst, ThreadID tid)
+ROB::instIsShadowed(DynInstPtr inst, ThreadID tid, bool v2)
 {
     bool shadowed = false;
-    for (auto instIt : instList[tid])
+    if (cpu->getThreatModel() == ThreatModel::Naive) {
+        if (inst != (*head)) return true;
+    }
+    for (const auto& instIt : instList[tid])
     {
-        auto shadow = instCastsShadow(instIt);
+        auto shadow = instCastsShadow(instIt, v2);
         if (shadow) {
             DPRINTF(ROB, "[tid:%i] Instruction PC %s "
                          "[sn:%llu] casts %s-Shadow\n",
@@ -404,8 +456,83 @@ ROB::instIsShadowed(DynInstPtr inst, ThreadID tid)
                 break;
             }
         }
+        DPRINTF(ROB, "[tid:%i] Instruction PC %s "
+                     "[sn:%llu] does not cast a Shadow\n",
+                tid, instIt->pcState(),
+                instIt->seqNum, shadow->toString());
+
+        if (inst == instIt) break; //only check for shadows until inst itself
     }
     return shadowed;
+}
+
+bool
+ROB::instIsV2Vulnerability(DynInstPtr inst, ThreadID tid)
+{
+    bool v2 = false;
+    for (const auto& instIt : instList[tid])
+    {
+        //older inst is v2 suspicious
+        if (instIt->isV2Suspicious()) {
+            DPRINTF(ROB, "[tid:%i] Instruction PC %s "
+                 "[sn:%llu] casts V2-Shadow\n",
+            tid, instIt->pcState(),instIt->seqNum);
+            //Check if the older instruction is shadowed by sth else
+            if (instIsShadowed(instIt, tid)) {
+                DPRINTF(ROB, "[tid:%i] Instruction PC %s "
+                             "[sn:%llu] casts V2-Shadow "
+                             "and is shadowed itself\n",
+                        tid, instIt->pcState(),
+                        instIt->seqNum);
+                // Don't cast shadow on itself
+                if (instIt != inst) {
+                    v2 = true;
+                    break;
+                }
+
+            }
+        } else {
+            DPRINTF(ROB, "[tid:%i] Instruction PC %s "
+                         "[sn:%llu] does not cast V2-Shadow\n",
+                    tid, instIt->pcState(),instIt->seqNum);
+        }
+        if (instIt == inst) break; //we only need to iterate from head to inst
+        /*auto _v2 = instCastsV2Shadow(instIt);
+        if (_v2) {
+            DPRINTF(ROB, "[tid:%i] Instruction PC %s "
+                         "[sn:%llu] casts V2 %s-Shadow\n",
+                    tid, instIt->pcState(),
+                    instIt->seqNum, _v2->toString());
+
+            // Don't cast shadow on itself
+            if (instIt != inst) {
+                v2 = true;
+                break;
+            }
+        }*/
+    }
+    return v2;
+}
+
+void
+ROB::olderOkapiReset(DynInstPtr inst, ThreadID tid)
+{
+    for (const auto& instIt : instList[tid])
+    {
+        //! Floating Point NOP is re-used for Okapi Reset
+        if ((instIt->isOkapiReset()
+            || instIt->isSyscall()) && !instIt->isExecuted()) {
+        //if ((instIt->isOkapiReset()) && !instIt->isExecuted()) {
+            inst->setOkapiResetSuccessor();
+            DPRINTF(ROB, "[tid:%i] Instruction PC %s "
+                         "[sn:%llu] is an FNOP and thus "
+                         "Instruction PC %s [sn:%llu]"
+                         " won't be speculated on\n",
+                    tid, instIt->pcState(),
+                    instIt->seqNum, inst->pcState(), inst->seqNum);
+            break;
+        }
+    }
 }
 
 void
@@ -424,7 +551,8 @@ ROB::updateShadowedInsts(ThreadID tid)
     DPRINTF(ROB, "[tid:%i] Try to unshadow instructions.\n", tid);
     std::vector<DynInstPtr> unshadowedInsts;
 
-    for (auto instIt : instList[tid])
+    //iterate through the ROB
+    for (const auto& instIt : instList[tid])
     {
         // Don't cast shadow on ROB head
         if (instIt != instList[tid].front()) {
@@ -434,7 +562,13 @@ ROB::updateShadowedInsts(ThreadID tid)
                              " [sn:%llu] casts %s-Shadow\n",
                              tid, instIt->pcState(),
                              instIt->seqNum, shadow->toString());
-
+                if (instIt->isUnsafeLoad()) {
+                    DPRINTF(ROB, "Unshadow shadowing inst itself PC %s "
+                                 "[sn:%llu].\n",
+                            instIt->pcState(), instIt->seqNum);
+                    instIt->clearUnsafeLoad();
+                    unshadowedInsts.push_back(instIt);
+                }
                 break;
             }
         }
@@ -446,7 +580,47 @@ ROB::updateShadowedInsts(ThreadID tid)
                          instIt->pcState(), instIt->seqNum);
             instIt->clearUnsafeLoad();
             unshadowedInsts.push_back(instIt);
+
+#if TRACING_ON
+            if (debug::O3PipeView) {
+                instIt->safeTick = curTick() - instIt->fetchTick;
+            }
+#endif
         }
+    }
+
+    DPRINTF(ROB, "[tid:%i] Try to unshadow V2 instructions.\n", tid);
+    //! find the first v2 suspicious instruction behind C shadow
+    bool found_unsafe = false;
+    for (auto instIt : instList[tid])
+    {
+        // Don't cast shadow on ROB head
+        if (instIt != instList[tid].front()) {
+            auto shadow = instCastsShadow(instIt, true);
+            if (shadow) {
+                DPRINTF(ROB, "[tid:%i] Instruction PC %s"
+                             " [sn:%llu] casts %s-Shadow\n",
+                        tid, instIt->pcState(),
+                        instIt->seqNum, shadow->toString());
+
+                found_unsafe = true;
+            }
+        }
+
+        //stop clearing when first suspicious inst after shadow is encountered
+        if (found_unsafe && instIt->isV2Suspicious()) break;
+
+        if (instIt->isOkapiV2Load())
+        {
+            DPRINTF(ROB, "V2 Unshadow inst PC %s "
+                         "[sn:%llu].\n",
+                    instIt->pcState(), instIt->seqNum);
+            //instIt->clearUnsafeLoad();
+            instIt->clearOkapiV2Load();
+            //unshadowedInsts.push_back(instIt);
+
+        }
+
     }
 
     return unshadowedInsts;
@@ -534,6 +708,9 @@ ROB::doSquash(ThreadID tid)
                 (*squashIt[tid])->threadNumber,
                 (*squashIt[tid])->pcState(),
                 (*squashIt[tid])->seqNum);
+
+        if (!(*squashIt[tid])->isIssued())
+            stats.okapiLoadsSquashedBeforeIssue++;
 
         // Mark the instruction as squashed, and ready to commit so that
         // it can drain out of the pipeline.
@@ -752,12 +929,21 @@ ROB::ROBStats::ROBStats(statistics::Group *parent)
         "The number of ROB writes"),
     ADD_STAT(loads, statistics::units::Count::get(),
              "The number of loads in the ROB"),
-    ADD_STAT(okapi_loads, statistics::units::Count::get(),
+    ADD_STAT(okapiLoads, statistics::units::Count::get(),
              "The number of unsafe loads under Okapi"),
     ADD_STAT(taints, statistics::units::Count::get(),
              "The number of taints initialized in the ROB"),
     ADD_STAT(branches_with_tainted_args, statistics::units::Count::get(),
-             "The number of branches with tainted args")
+             "The number of branches with tainted args"),
+    ADD_STAT(syscalls, statistics::units::Count::get(),
+             "The number of syscalls inserted into the ROB"),
+    ADD_STAT(okapiV2Loads, statistics::units::Count::get(),
+             "The number of loads that are unsafe under"
+             " the futuristic model inserted in the ROB"),
+    ADD_STAT(okapiV1Loads, statistics::units::Count::get(),
+             "The number of loads that are unsafe"
+             " under the spectre model inserted in the ROB")
+
 {
 }
 
@@ -771,6 +957,66 @@ ROB::findInst(ThreadID tid, InstSeqNum squash_inst)
     }
     return NULL;
 }
+
+void
+ROB::compute_taint(ThreadID tid)
+{
+    assert(cpu->getSpeculativeLoadPolicy() == SpeculativeLoadPolicy::STT);
+    DPRINTF(ROB, "[tid:%i] Try to unshadow instructions.\n", tid);
+    std::vector<DynInstPtr> unshadowedInsts;
+    std::vector<InstSeqNum> unshadowedYRoTs;
+    //! Collect all Access instructions that are bound to commit
+    for (const auto& instIt : instList[tid])
+    {
+        // Don't cast shadow on ROB head
+        if (instIt != instList[tid].front()) {
+            auto shadow = instCastsShadow(instIt);
+            if (shadow) {
+                DPRINTF(
+                        ROB,
+                        "[tid:%i] Instruction PC %s [sn:%llu]"
+                        " casts %s-Shadow\n",
+                        tid, instIt->pcState(),
+                        instIt->seqNum, shadow->toString());
+
+                break;
+            }
+        }
+
+        if ((instIt->isDestTainted()) && instIt->isAccess())
+        {
+            DPRINTF(ROB, "Unshadow inst PC %s [sn:%llu].\n"
+                    , instIt->pcState(), instIt->seqNum);
+            instIt->isDestTainted(false);
+            //instIt->isArgsTainted(false);
+            unshadowedInsts.push_back(instIt);
+            unshadowedYRoTs.push_back(instIt->seqNum);
+        }
+    }
+    //! Clear the taints caused by these access instructions in the regfile
+    regFile->clearYRoTsAndTaints(unshadowedYRoTs);
+
+    //! Untaint the instructions themselves
+    for (const auto& instIt : instList[tid])
+    {
+        bool tainted = false;
+        for (int i = 0; i < instIt->numSrcRegs(); i++) {
+            //zero reg cannot be taintes
+            if (instIt->srcRegIdx(i).index() == 16)
+                continue;
+            if (regFile->getTaint(instIt->renamedSrcIdx(i))) {
+                tainted = true;
+                instIt->isArgsTainted(true);
+            }
+        }
+        if (!tainted) {
+            instIt->isArgsTainted(false);
+            instIt->isDestTainted(false);
+        }
+
+    }
+}
+
 
 } // namespace o3
 } // namespace gem5

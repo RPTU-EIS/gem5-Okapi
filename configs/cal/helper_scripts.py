@@ -25,7 +25,7 @@ from common.Caches import *
 
 gem5_root = "/data/schmitz/gem5-Okapi"
 
-disk_image = f"/import/home/schmitz/AmundKernelAndImage/x86-3.img"
+disk_image = f"/data/schmitz/AmundKernelAndImage/x86-3.img"
 kernel = f"/import/home/schmitz/AmundKernelAndImage/plinux"
 script_path = f"{gem5_root}/configs/cal/run_scripts"
 checkpoints = f"{gem5_root}/configs/cal/checkpoints"

@@ -175,7 +175,13 @@ class DynInst : public ExecContext, public RefCounted
         InStallList,             /// Instruction is stalled because it's unsafe
         UnsafeLoad,              /// Unsafe loads are not allowed to execute
         OkapiLoad,
+        OkapiV2Load,
+        OkapiResetSuccessor,
         NoLongerOkapi,
+        BlockPCBlocked,
+        V2Suspicious,
+        PTWReschedule,
+        hasBeenSentBefore,
         Shadowed,         /// Instruction has been shadowed at some point
         Unsafe,           /// Instruction is stalled because it's unsafe
 
@@ -219,6 +225,8 @@ class DynInst : public ExecContext, public RefCounted
 
     /** PC state for this instruction. */
     std::unique_ptr<PCStateBase> pc;
+
+    Addr block_PC;
 
     /** Values to be written to the destination misc. registers. */
     std::vector<RegVal> _destMiscRegVal;
@@ -374,7 +382,7 @@ class DynInst : public ExecContext, public RefCounted
      * Saved memory request (needed when the DTB address translation is
      * delayed due to a hw page table walk).
      */
-    LSQ::LSQRequest *savedRequest;
+    LSQ::LSQRequest *savedRequest = nullptr;
 
     /////////////////////// Checker //////////////////////
     // Need a copy of main request pointer to verify on writes.
@@ -618,6 +626,9 @@ class DynInst : public ExecContext, public RefCounted
     bool isHtmCancel() const { return staticInst->isHtmCancel(); }
     bool isHtmCmd() const { return staticInst->isHtmCmd(); }
 
+    bool isOkapiReset() const { return staticInst->isOkapiReset(); }
+    bool isLFence() const { return staticInst->isLFence(); }
+    bool isMFence() const { return staticInst->isMFence(); }
     uint64_t
     getHtmTransactionUid() const override
     {
@@ -790,6 +801,24 @@ class DynInst : public ExecContext, public RefCounted
 
     bool isInStallList() const { return status[InStallList]; }
 
+    void setV2Suspicious() { status.set(V2Suspicious); }
+
+    void unsetV2Suspicious() { status.reset(V2Suspicious); }
+
+    bool isV2Suspicious() const { return status[V2Suspicious]; }
+
+    void setBlockPCBlocked() { status.set(BlockPCBlocked); }
+
+    void unsetBlockPCBlocked() { status.reset(BlockPCBlocked); }
+
+    bool isBlockPCBlocked() const { return status[BlockPCBlocked]; }
+
+    void setPTWReschedule() { status.set(PTWReschedule); }
+
+    void unsetPTWReschedule() { status.reset(PTWReschedule); }
+
+    bool isPTWReschedule() const { return status[PTWReschedule]; }
+
     void setUnsafe() { status.set(Unsafe); }
 
     void unsetUnsafe() { status.reset(Unsafe); }
@@ -801,8 +830,20 @@ class DynInst : public ExecContext, public RefCounted
     void clearUnsafeLoad() { status.reset(UnsafeLoad); }
     bool isUnsafeLoad() { return status[UnsafeLoad]; }
 
+
+    void setOkapiV2Load() { status.set(OkapiV2Load); }
+    void clearOkapiV2Load() { status.reset(OkapiV2Load); }
+    bool isOkapiV2Load() { return status[OkapiV2Load]; }
+
     void setOkapiLoad() { status.set(OkapiLoad); }
     bool isOkapiLoad() { return status[OkapiLoad]; }
+
+    void setHasBeenSentBefore() { status.set(hasBeenSentBefore); }
+    bool isHasBeenSentBefore() { return status[hasBeenSentBefore]; }
+
+    void setOkapiResetSuccessor() { status.set(OkapiResetSuccessor); }
+    bool isOkapiResetSuccessor() { return status[OkapiResetSuccessor]; }
+    void clearOkapiResetSuccessor() { status.reset(OkapiResetSuccessor); }
 
     void setNoLongerOkapiLoad() { status.set(NoLongerOkapi); }
     bool isNoLongerOkapiLoad() { return status[NoLongerOkapi]; }
@@ -945,6 +986,20 @@ class DynInst : public ExecContext, public RefCounted
         status.set(PinnedRegsSquashDone);
     }
 
+    /** [Philipp Schmitz] Okapi v2 Block PC */
+
+    Addr
+    getBlockPC() const
+    {
+        return block_PC;
+    }
+
+    void
+    setBlockPC(Addr block)
+    {
+        block_PC = block;
+    }
+
     /** Read the PC state of this instruction. */
     const PCStateBase &
     pcState() const override
@@ -1059,6 +1114,8 @@ class DynInst : public ExecContext, public RefCounted
     int32_t renameTick = -1;  // instruction enters rename phase
     int32_t dispatchTick = -1;
     int32_t issueTick = -1;
+    int32_t unsafeTick = -1;  // instruction is unsafe
+    int32_t safeTick = -1;  // instruction is unsafe
     int32_t completeTick = -1;
     int32_t commitTick = -1;
     int32_t storeTick = -1;
@@ -1074,6 +1131,12 @@ class DynInst : public ExecContext, public RefCounted
     RegVal
     readMiscReg(int misc_reg) override
     {
+        /** If time stamp counter in x86 is read
+         * call debug function for timing array
+         */
+        if (misc_reg == 26) {
+            return cpu->readMiscReg(misc_reg, threadNumber, this);
+        }
         return cpu->readMiscReg(misc_reg, threadNumber);
     }
 

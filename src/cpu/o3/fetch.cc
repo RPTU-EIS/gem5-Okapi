@@ -167,6 +167,8 @@ Fetch::FetchStatGroup::FetchStatGroup(CPU *cpu, Fetch *fetch)
              "Number of cycles fetch has spent squashing"),
     ADD_STAT(tlbCycles, statistics::units::Cycle::get(),
              "Number of cycles fetch has spent waiting for tlb"),
+    ADD_STAT(privRequests, statistics::units::Count::get(),
+               "Number of privileged requests to itlb"),
     ADD_STAT(idleCycles, statistics::units::Cycle::get(),
              "Number of cycles fetch was idle"),
     ADD_STAT(blockedCycles, statistics::units::Cycle::get(),
@@ -489,15 +491,29 @@ Fetch::lookupAndUpdateNextPC(const DynInstPtr &inst, PCStateBase &next_pc)
     // A bit of a misnomer...next_PC is actually the current PC until
     // this function updates it.
     bool predict_taken;
-
+    ThreadID tid = inst->threadNumber;
     if (!inst->isControl()) {
         inst->staticInst->advancePC(next_pc);
         inst->setPredTarg(next_pc);
         inst->setPredTaken(false);
+        //! Mark all other instructions that predict
+        //! a target crosses the page boundary
+        if (bits(inst->pcState().instAddr(),63,12)
+        != bits(next_pc.instAddr(), 63, 12)) {
+            DPRINTF(Fetch, "[tid:%i] Inst [sn:%llu] "
+                           "that predicts to branch from PC %#x "
+                           "to %s is marked suspicious since %s"
+                           "does not match %s\n",
+                    tid, inst->seqNum, inst->pcState().instAddr(),
+                    next_pc, bits(inst->pcState().instAddr(),63,12),
+                    bits(next_pc.instAddr(), 63, 12));
+            inst->setV2Suspicious();
+            //assert(0);
+        }
         return false;
     }
 
-    ThreadID tid = inst->threadNumber;
+
     predict_taken = branchPred->predict(inst->staticInst, inst->seqNum,
                                         next_pc, tid);
 
@@ -521,6 +537,21 @@ Fetch::lookupAndUpdateNextPC(const DynInstPtr &inst, PCStateBase &next_pc)
 
     if (predict_taken) {
         ++fetchStats.predictedBranches;
+    }
+
+    //! Mark control instructions that
+    //! predict a target crosses the page boundary
+    if (bits(inst->pcState().instAddr(),63,12)
+    != bits(next_pc.instAddr(), 63, 12)) {
+        DPRINTF(Fetch, "[tid:%i] Inst [sn:%llu] that "
+                       "predicts to branch from PC %#x "
+                       "to %s is marked suspicious since "
+                       "%s does not match %s\n",
+                tid, inst->seqNum, inst->pcState().instAddr(),
+                next_pc, bits(inst->pcState().instAddr(),63,12),
+                bits(next_pc.instAddr(), 63, 12));
+        inst->setV2Suspicious();
+        //assert(0);
     }
 
     return predict_taken;
@@ -580,6 +611,15 @@ Fetch::finishTranslation(const Fault &fault, const RequestPtr &mem_req)
 {
     ThreadID tid = cpu->contextToThread(mem_req->contextId());
     Addr fetchBufferBlockPC = mem_req->getVaddr();
+    Addr instructionPageBaseAddr = mem_req->getVaddr();
+    if (mem_req->hasPaddr()) {
+        instructionPageBaseAddr = bits(mem_req->getPaddr(),
+                                       63, 12);
+        DPRINTF(Fetch, "[tid:%i] Paddr %s, Vaddr %s, baseAddr %s\n",
+                tid, mem_req->getPaddr(),
+                mem_req->getVaddr(), instructionPageBaseAddr);
+    }
+
 
     assert(!cpu->switchedOut());
 
@@ -594,6 +634,8 @@ Fetch::finishTranslation(const Fault &fault, const RequestPtr &mem_req)
         return;
     }
 
+    if (mem_req->isPriv()) ++fetchStats.privRequests;
+    //mem_req->
 
     // If translation was successful, attempt to read the icache block.
     if (fault == NoFault) {
@@ -613,6 +655,9 @@ Fetch::finishTranslation(const Fault &fault, const RequestPtr &mem_req)
         data_pkt->dataDynamic(new uint8_t[fetchBufferSize]);
 
         fetchBufferPC[tid] = fetchBufferBlockPC;
+
+        instructionPageBaseAddress[tid] = instructionPageBaseAddr;
+
         fetchBufferValid[tid] = false;
         DPRINTF(Fetch, "Fetch: Doing instruction read.\n");
 
@@ -1032,6 +1077,8 @@ Fetch::buildInst(ThreadID tid, StaticInstPtr staticInst,
     DynInstPtr instruction = new (arrays) DynInst(
             arrays, staticInst, curMacroop, this_pc, next_pc, seq, cpu);
     instruction->setTid(tid);
+
+    instruction->setBlockPC(instructionPageBaseAddress[tid]);
 
     instruction->setThreadState(cpu->thread[tid]);
 

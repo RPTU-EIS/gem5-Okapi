@@ -67,6 +67,7 @@
 #include "cpu/base.hh"
 #include "cpu/simple_thread.hh"
 #include "cpu/timebuf.hh"
+#include "enums/OkapiVariation.hh"
 #include "enums/SpeculativeLoadPolicy.hh"
 #include "enums/ThreatModel.hh"
 #include "params/BaseO3CPU.hh"
@@ -117,6 +118,26 @@ class CPU : public BaseCPU
 
     /** Overall CPU status. */
     Status _status;
+
+    bool read_tsc = false;
+    unsigned long Rax = 0;
+    unsigned long        Rcx = 0;
+    unsigned long        Rdx = 0;
+    unsigned long       Rbx = 0;
+    unsigned long        Rsp = 0;
+    unsigned long        Rbp = 0;
+    unsigned long        Rsi = 0;
+    unsigned long        Rdi = 0;
+    unsigned long        R8 = 0;
+    unsigned long        R9 = 0;
+    unsigned long        R10 = 0;
+    unsigned long       R11 = 0;
+    unsigned long        R12 = 0;
+    unsigned long        R13 = 0;
+    unsigned long        R14 = 0;
+    unsigned long       R15 = 0;
+    unsigned long        T0 = 0;
+    unsigned long long int tsc;
 
   private:
 
@@ -307,6 +328,8 @@ class CPU : public BaseCPU
      */
     RegVal readMiscReg(int misc_reg, ThreadID tid);
 
+    RegVal readMiscReg(int misc_reg, ThreadID tid, const DynInstPtr& inst);
+
     /** Sets a miscellaneous register. */
     void setMiscRegNoEffect(int misc_reg, RegVal val, ThreadID tid);
 
@@ -366,6 +389,12 @@ class CPU : public BaseCPU
 
     /** Remove all instructions younger than the given sequence number. */
     void removeInstsUntil(const InstSeqNum &seq_num, ThreadID tid);
+
+    /** Get inst at ROB head.*/
+    DynInstPtr getROBHeadInst() const;
+
+    /** Get inst at ROB head.*/
+    //std::deque<Addr>& getROBBlockPCSet() const;
 
     /** Removes the instruction pointed to by the iterator. */
     void squashInstIt(const ListIt &instIt, ThreadID tid);
@@ -487,8 +516,9 @@ class CPU : public BaseCPU
 
 
     //! Okapi Philipp Schmitz 02.08.2023
-    const ThreatModel threatModel;
+    const OkapiVariation okapiVariation;
     const SpeculativeLoadPolicy speculativeLoadPolicy;
+    const ThreatModel threatModel;
 
 
     public:
@@ -581,6 +611,12 @@ class CPU : public BaseCPU
         return iew.ldstQueue.getDataPort();
     }
 
+    OkapiVariation
+    getOkapiVariation () const
+    {
+        return okapiVariation;
+    }
+
     SpeculativeLoadPolicy
     getSpeculativeLoadPolicy () const
     {
@@ -611,7 +647,9 @@ class CPU : public BaseCPU
     // hardware transactional memory
     void htmSendAbortSignal(ThreadID tid, uint64_t htm_uid,
                             HtmFailureFaultCause cause) override;
-};
+
+        int getROBCnt() const;
+    };
 
 } // namespace o3
 } // namespace gem5

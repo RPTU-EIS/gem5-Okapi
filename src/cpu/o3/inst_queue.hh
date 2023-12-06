@@ -202,6 +202,11 @@ class InstructionQueue
      */
     DynInstPtr getDeferredMemInstToExecute();
 
+    /** Gets a memory instruction that was stalled due to TES mitigation
+     *  to execute if it is safe.  NULL if none available.
+     */
+    DynInstPtr getStalledMemInstToExecute();
+
     /** Gets a memory instruction that was blocked on the cache. NULL if none
      *  available.
      */
@@ -238,6 +243,13 @@ class InstructionQueue
     /** Wakes all dependents of a completed instruction. */
     int wakeDependents(const DynInstPtr &completed_inst);
 
+    /** [Schmitz, STT] do a scan of instList and wake readyToIssue insts **/
+    /** Used because wakeDependents cannot set readyToIssue if argsTainted **/
+    void wakeUntaintInsts();
+
+
+    void wakeOkapiReset();
+
     /** Adds a ready memory instruction to the ready list. */
     void addReadyMemInst(const DynInstPtr &ready_inst);
 
@@ -255,6 +267,10 @@ class InstructionQueue
      * page table walk.
      */
     void deferMemInst(const DynInstPtr &deferred_inst);
+
+    void stallMemInst(const DynInstPtr &stalled_inst);
+
+    void printstallMemInst();
 
     /**  Defers a memory instruction when it is cache blocked. */
     void blockMemInst(const DynInstPtr &blocked_inst);
@@ -320,6 +336,12 @@ class InstructionQueue
     /** List of all the instructions in the IQ (some of which may be issued). */
     std::list<DynInstPtr> instList[MaxThreads];
 
+    /*** [Schmitz,STT] List of all stalled tainted ready instructions ***/
+    std::list<DynInstPtr> stalledTaintedInstList[MaxThreads];
+
+    /*** [Schmitz,STT] List of all stalled okapi reset instructions ***/
+    std::list<DynInstPtr> stalledOkapiResetList[MaxThreads];
+
     /** List of instructions that are ready to be executed. */
     std::list<DynInstPtr> instsToExecute;
 
@@ -327,6 +349,10 @@ class InstructionQueue
      *  complete (hw page table walk in progress).
      */
     std::list<DynInstPtr> deferredMemInsts;
+
+    /** List of instructions waiting for their TES mitigation to release them
+     */
+    std::list<DynInstPtr> stalledMemInsts;
 
     /** List of instructions that have been cache blocked. */
     std::list<DynInstPtr> blockedMemInsts;
@@ -460,8 +486,11 @@ class InstructionQueue
     /** Adds an instruction to the dependency graph, as a producer. */
     void addToProducers(const DynInstPtr &new_inst);
 
-    /** Moves an instruction to the ready queue if it is ready. */
+    /** Checks if an instruction is ready. */
     void addIfReady(const DynInstPtr &inst);
+
+    /** Moves an instruction to the ready queue if it is ready. */
+    void addReady(const DynInstPtr &inst);
 
     /** Debugging function to count how many entries are in the IQ.  It does
      *  a linear walk through the instructions, so do not call this function
@@ -519,6 +548,9 @@ class InstructionQueue
         statistics::Scalar okapiLoadSquash;
         /** Stat for number of rescheduled Okapi loads that missed before. */
         statistics::Scalar okapiLoadReschedule;
+        /** Stat for number of rescheduled Okapi
+         * loads that have been blocked by V2 before. */
+        statistics::Scalar okapiLoadRescheduleV2;
         /** Distribution of number of instructions in the queue.
          * @todo: Need to create struct to track the entry time for each
          * instruction. */
