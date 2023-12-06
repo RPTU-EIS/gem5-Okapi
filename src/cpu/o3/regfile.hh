@@ -72,7 +72,9 @@ class PhysRegFile
                               PhysIds::iterator>;
   private:
     /** Integer register file. */
+public:
     RegFile intRegFile;
+private:
     std::vector<PhysRegId> intRegIds;
     std::vector<bool> intRegTaints;
     std::vector<InstSeqNum> intRegYRoTs;

@@ -55,7 +55,7 @@ format WarnUnimpl {
             }
             0x2: decode MODRM_MOD {
                 0x3: decode MODRM_RM {
-                    0x0: fnop();
+                    0x0: Inst::FNOP();
                 }
                 default: Inst::FST(Md);
             }

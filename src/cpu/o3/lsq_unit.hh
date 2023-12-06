@@ -544,8 +544,29 @@ class LSQUnit
         statistics::Scalar okapiHits;
 
         /**
+         * Number of Okapi Loads that hit in the TLB */
+        statistics::Scalar okapiResetBlocks;
+
+        /**
+         * Number of Okapi Loads that hit in the TLB */
+        statistics::Scalar okapiV2Blocks;
+
+        /**
          * Number of Okapi Loads that miss in the TLB */
         statistics::Scalar okapiMisses;
+
+        /**
+         * Number of Okapi Loads that have been initiated (ready to issue) */
+        statistics::Scalar okapiLoadsInitiated;
+        /**
+         * Number of Okapi Loads that miss in the TLB */
+        statistics::Scalar privRequests;
+
+        statistics::Scalar okapiLoadsRescheduled;
+
+        statistics::Scalar safeLoadInitiated;
+
+        statistics::Scalar executedLoads;
 
     } stats;
 

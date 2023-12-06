@@ -10,6 +10,8 @@ from m5.objects import *
 from m5.params import NULL
 from m5.util import addToPath, fatal, warn
 from gem5.components.processors.cpu_types import CPUTypes
+from gem5.components.processors.base_cpu_core import BaseCPUCore
+from gem5.components.processors.base_cpu_processor import BaseCPUProcessor
 
 addToPath("../")
 
@@ -24,7 +26,7 @@ from common import (
 from common.FileSystemConfig import config_filesystem
 from common.Caches import *
 
-import helper_scripts as hs
+import helper_scripts_spectre as hs
 
 
 parser = argparse.ArgumentParser()
@@ -37,9 +39,15 @@ args.at_instruction = True
 args.checkpoint_dir = "cpts"
 if not os.path.exists("cpts"):
     os.mkdir("cpts")
-args.take_checkpoints = 1400000000
+# args.take_checkpoints = 1400000000
+# args.take_checkpoints = 1900000000
+args.take_checkpoints = 3450500000
+# args.checkpoint_at_end = True
 print(33)
+print(list(CPUTypes))
 args.cpu_type = "AtomicSimpleCPU"
+# args.cpu_type = "O3CPU"
+# args.cpu_type = "X86KvmCPU"
 print(35)
 (cpu, mem, futureclass) = Simulation.setCPUClass(args)
 print(37)

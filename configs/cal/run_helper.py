@@ -71,10 +71,10 @@ def get_extra_args(bench, index, full_system):
     )
 
 
-def get_scheme_args(scheme, ap):
+def get_scheme_args(scheme, ap, threat):
     # if ap:
     #    return f" --scheme {scheme} --address_prediction"
-    return f" --speculativeLoadPolicy {scheme} --threatModel Spectre"
+    return f" --speculativeLoadPolicy {scheme} --threatModel {threat} --okapiVariation {ap}"
 
 
 def get_tdiff_scheme_args(scheme, ap):
@@ -198,8 +198,8 @@ def setup_workdir(wdir):
     os.mkdir(wdir)
 
 
-def setup_rundir(bname, iteration, wdir, scheme):
-    tgt = f"{wdir}/{bname}_{iteration}_{scheme}"
+def setup_rundir(bname, iteration, wdir, scheme, threat, ap):
+    tgt = f"{wdir}/{bname}_{iteration}_{scheme}_{threat}_{ap}"
     if os.path.exists(tgt):
         shutil.rmtree(tgt)
     os.mkdir(tgt)
@@ -249,10 +249,12 @@ def run_tdiff_benchmark(bench, bname, iteration, index, scheme, ap):
         print(f"Finished with code {os.system(run_ref)}")
 
 
-def run_sim_benchmark(bench, bname, iteration, index, scheme, ap, s_name=""):
+def run_sim_benchmark(
+    bench, bname, iteration, index, scheme, ap, threat, s_name=""
+):
     num_sims = get_num_points(bench, bname, iteration)
     args = get_extra_args(bench, index, not syscall_mode)
-    args += get_scheme_args(scheme, ap)
+    args += get_scheme_args(scheme, ap, threat)
     args += f" --checkpoint-dir={simpoints}/{bench}/{bname}_{iteration}"
     if syscall_mode:
         args += get_syscall_args(bench, bname, iteration, index)
@@ -261,35 +263,41 @@ def run_sim_benchmark(bench, bname, iteration, index, scheme, ap, s_name=""):
         args += f" --config {s_name}"
 
     for x in range(num_sims):
-        # redirect = f"--debug-flags=O3CPUAll,TLB,PageTableWalker --debug-start=16327763846379"# -r --outdir={bname}_{iteration}_{x}_out" #
-        # redirect = f"--debug-flags=O3CPUAll"# -r --outdir={bname}_{iteration}_{x}_out"
-        redirect = f"-r --outdir={bname}_{iteration}_{x}_{scheme}_out"
-        run_ref = f"{gem5} {redirect} {run_sim} {args} --sim_num {x}"  # |rotatelogs -t /data/schmitz/gem5_okapi_bench_runs/okapilog{x}.log  1G"
+        # redirect = f"--debug-flags=O3CPUAll,TLB,PageTableWalker"# -r --outdir={bname}_{iteration}_{x}_out_dbg"# --debug-start=6358920803567"#
+        # redirect = f"--debug-flags=O3PipeView -r --outdir={bname}_{iteration}_{x}_{scheme}_dbg_out"
+        redirect = (
+            f"-r --outdir={bname}_{iteration}_{x}_{scheme}_{threat}_{ap}_out"
+        )
+        run_ref = f"{gem5} {redirect} {run_sim} {args} --sim_num {x}"  # |rotatelogs -t /data/schmitz/gem5_okapi_bench_runs/okapilogperl{x}.log  3G"
         print(run_ref)
         print(f"Finished with code {os.system(run_ref)}")
 
 
 def get_scheme_and_ap_from_tag(tag):
     if tag == "bl":
-        return ("None", False)
+        return ("None", "v1")
     if tag == "NaiveDelay":
-        return ("NaiveDelay", False)
+        return ("NaiveDelay", "v1")
     if tag == "EagerDelay":
-        return ("EagerDelay", False)
+        return ("EagerDelay", "v1")
     if tag == "mp" or tag == "delay":
-        return (1, False)
+        return (1, "v1")
     if tag == "ap" or tag == "delay+ap" or tag == "mp+ap":
-        return (1, True)
+        return (1, "v1")
+    if tag == "STT":
+        return ("STT", "v1")
     if tag == "stt":
-        return (2, False)
+        return (2, "v1")
     if tag == "sap" or tag == "stt+ap":
-        return (2, True)
+        return (2, "v1")
     if tag == "dom":
-        return (3, False)
+        return (3, "v1")
     if tag == "dap" or tag == "dom+ap":
-        return (3, True)
-    if tag == "Okapi":
-        return ("Okapi", False)
+        return (3, "v1")
+    if tag == "Okapiv1":
+        return ("Okapi", "v1")
+    if tag == "Okapiv2":
+        return ("Okapi", "v2")
     assert False
 
 
@@ -330,8 +338,10 @@ def main():
 
     s_name = sys.argv[6]
 
+    threat = sys.argv[7]
+
     single = False
-    if len(sys.argv) == 8:
+    if len(sys.argv) == 9:
         single = True
 
     special = s_name != "blank"
@@ -344,12 +354,12 @@ def main():
     tdir = f"{rdir}/{tag}"
     wdir = f"/data/schmitz/gem5_okapi_bench_runs/jobs/{name if not special else f'{name}_{s_name}'}"
 
-    if index == 0 or single:
-        if smp_r:
-            setup_results(rdir, tdir)
-        setup_workdir(wdir)
+    # if index == 0 or single:
+    #    if smp_r:
+    #        setup_results(rdir, tdir)
+    #    setup_workdir(wdir)
 
-    setup_rundir(bname, iteration, wdir, scheme)
+    setup_rundir(bname, iteration, wdir, scheme, threat, ap)
 
     print(smp_p, smp_t, smp_r, cpt_t, tdiff)
     assert sum([smp_p, smp_t, smp_r, cpt_t, tdiff, cpt_and_smp_p]) == 1
@@ -368,7 +378,7 @@ def main():
 
     cwd = os.getcwd()
 
-    os.chdir(f"{wdir}/{bname}_{iteration}_{scheme}")
+    os.chdir(f"{wdir}/{bname}_{iteration}_{scheme}_{threat}_{ap}")
 
     if smp_p or smp_t:
         copy_cpt(bench, bname, iteration)
@@ -385,7 +395,9 @@ def main():
 
     # simpoints and tdiff require multiple runs handled by external script
     if smp_r:
-        run_sim_benchmark(bench, bname, iteration, index, scheme, ap, s_name)
+        run_sim_benchmark(
+            bench, bname, iteration, index, scheme, ap, threat, s_name
+        )
     elif tdiff:
         run_tdiff_benchmark(bench, bname, iteration, index, scheme, ap)
     # rest require only a single config-handled run

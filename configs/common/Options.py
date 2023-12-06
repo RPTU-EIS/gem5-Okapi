@@ -781,8 +781,18 @@ def addSimpointRunOptions(parser):
         default="Spectre",
         action="store",
         type=str,
-        choices=["Spectre", "Futuristic"],
+        choices=["Spectre", "Futuristic", "Naive"],
         help="Which scheme to use",
+    )
+
+    # Simulation options
+    parser.add_argument(
+        "--okapiVariation",
+        default="v2",
+        action="store",
+        type=str,
+        choices=["v1", "v2", "opt"],
+        help="Which Okapi variation to use",
     )
 
 

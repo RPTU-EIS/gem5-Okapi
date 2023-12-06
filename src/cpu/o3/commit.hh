@@ -129,7 +129,8 @@ class Commit
 
     /** [Philipp Schmitz] Okpai, add debug signal
      * to trigger when the ROB gets stuck*/
-    int rob_stuck = 0;
+    long long unsigned int rob_stuck = 0;
+    long long unsigned int rob_stuck_limit = 100000;
 
     /** Mark the thread as processing a trap. */
     void processTrapEvent(ThreadID tid);
@@ -494,6 +495,9 @@ class Commit
 
         /** Number of cycles where the commit bandwidth limit is reached. */
         statistics::Scalar commitEligibleSamples;
+
+        /** Number of cycles where the commit bandwidth limit is reached. */
+        //statistics::Scalar robBlockPCs;
     } stats;
 };
 

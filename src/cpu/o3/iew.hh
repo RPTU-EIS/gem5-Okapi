@@ -278,6 +278,13 @@ class IEW
      */
     void writebackInsts();
 
+    /** [Schmitz,STT] wakeup untaint insts **/
+    /** after writebackInsts and try to wake untaint instrs **/
+    void wakeUntaintInsts();
+
+
+    void wakeOkapiReset();
+
     /** Checks if any of the stall conditions are currently true. */
     bool checkStall(ThreadID tid);
 
@@ -457,6 +464,10 @@ class IEW
         /** Stat for total number of mispredicted branches detected at
          *  execute. */
         statistics::Formula branchMispredicts;
+        /** Stat for total number of okapi resets. */
+        statistics::Scalar okapiResets;
+        /** Stat for total number of okapi resets. */
+        statistics::Scalar okapiResetsCEX;
 
         struct ExecutedInstStats : public statistics::Group
         {
