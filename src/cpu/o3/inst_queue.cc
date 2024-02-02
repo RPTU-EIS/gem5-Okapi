@@ -1280,7 +1280,7 @@ InstructionQueue::getStalledMemInstToExecute() {
                 DPRINTF(IQ, "[sn:%llu] is okapi load\n"
                 , (*it)->seqNum);
                 if ((*it)->isNoLongerOkapiLoad()) {
-                    std::cout << "no longer okapi "
+                    std::cout << "no longer okapi ";
                     std::cout << " load is deprecated?" << std::endl;
                     assert(0);
                     DPRINTF(IQ, "[sn:%llu] squashed load is no "
