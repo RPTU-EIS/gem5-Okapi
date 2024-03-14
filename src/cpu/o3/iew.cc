@@ -1251,8 +1251,10 @@ IEW::executeInsts()
             // Tell the LDSTQ to execute this instruction (if it is a load).
             if (inst->isOkapiReset()) {
                 // AMOs are treated like store requests
-                fault = ldstQueue.executeOkapiReset(inst);
-                if (inst->isOkapiReset()) iewStats.okapiResets++;
+                if (cpu->getOkapiReset()) {
+                    ldstQueue.executeOkapiReset(inst);
+                    iewStats.okapiResets++;
+                }
                 DPRINTF(IEW, "Execute: Reset Okapi safe access bits.\n");
                 inst->setExecuted();
 
@@ -1270,10 +1272,10 @@ IEW::executeInsts()
                     if (!inst->readPredicate())
                         inst->forwardOldRegs();
                 }
-                if (inst->isSyscall()) {
+                /*if (inst->isSyscall()) {
                     fault = ldstQueue.executeOkapiReset(inst);
                     iewStats.okapiResetsCEX++;
-                }
+                }*/
 
 
                 inst->setExecuted();

@@ -250,6 +250,7 @@ LSQ::executeOkapiReset(const DynInstPtr &inst) {
     // the TLB but I think it should be doable like this
     //since we execute at head and
     // TLB should have some spare time
+    assert(cpu->getOkapiReset());
     thread[tid].getMMUPtr()->resetOkapiBits();
     return NoFault;
 }

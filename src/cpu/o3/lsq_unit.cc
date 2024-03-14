@@ -645,9 +645,10 @@ LSQUnit::executeLoad(const DynInstPtr &inst)
             //it has to go to TLB
 
             //!Okapi v1 send all loads to TLB
-            if (cpu->getOkapiVariation() == OkapiVariation::v1 ||
-                cpu->getOkapiVariation() == OkapiVariation::opt) {
+            if (cpu->getOkapiVariation() == OkapiVariation::v1) {
                 if (inst->isOkapiResetSuccessor()) {
+                    //! can only be a reset successor if resetting is enabled
+                    assert(cpu->getOkapiReset());
                     //Do not initiate unsafe loads that follow an Okapi reset
                     DPRINTF(LSQUnit, "Delaying load PC %s, [sn:%lli]"
                                      " because it is behind an Okapi reset\n",
@@ -668,6 +669,9 @@ LSQUnit::executeLoad(const DynInstPtr &inst)
             } else if (cpu->getOkapiVariation() == OkapiVariation::v2) {
                 if (!inst->isOkapiV2Load()) {
                     if (inst->isOkapiResetSuccessor()) {
+                        //! can only be a reset successor
+                        //! if resetting is enabled
+                        assert(cpu->getOkapiReset());
                         //Do not initiate unsafe loads
                         // that follow an Okapi reset
                         DPRINTF(LSQUnit, "Delaying load PC %s, [sn:%lli]"
@@ -686,6 +690,9 @@ LSQUnit::executeLoad(const DynInstPtr &inst)
                     }
                 } else {
                     if (inst->isOkapiResetSuccessor()) {
+                        //! can only be a reset successor
+                        //! if resetting is enabled
+                        assert(cpu->getOkapiReset());
                         //Do not initiate unsafe loads
                         // that follow an Okapi reset
                         DPRINTF(LSQUnit, "Delaying load PC %s, [sn:%lli]"

@@ -1120,6 +1120,7 @@ void InstructionQueue::wakeOkapiReset()
     for (const auto& tid: *activeThreads) {
         for (auto it = stalledOkapiResetList[tid].begin();
             it != stalledOkapiResetList[tid].end(); ) {
+            assert(cpu->getOkapiReset());
             DynInstPtr inst = *it;
             if (inst->isSquashed()) {
                 inst->removeFromStallList();

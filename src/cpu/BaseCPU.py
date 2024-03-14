@@ -63,7 +63,7 @@ class SpeculativeLoadPolicy(ScopedEnum):
 
 
 class OkapiVariation(ScopedEnum):
-    vals = ["v1", "v2", "opt"]
+    vals = ["v1", "v2"]
 
 
 class ThreatModel(ScopedEnum):
@@ -138,7 +138,12 @@ class BaseCPU(ClockedObject):
         "Enable policies to prevent speculative side-channel vulnerabilities",
     )
 
-    okapiVariation = Param.OkapiVariation("v1", "different Okapi variations")
+    okapiVariation = Param.OkapiVariation("v2", "different Okapi variations")
+
+    okapiReset = Param.Bool(
+        False,
+        "enable OkapiReset via fnop",
+    )
 
     threatModel = Param.ThreatModel(
         "Futuristic", "Whether to enable all shadows or only C-Shadows"

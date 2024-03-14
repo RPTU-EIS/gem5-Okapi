@@ -45,6 +45,8 @@ def get_names(bench, index):
             bname = all_names[index].split(".")[1].strip()
             iteration = it.readlines()[index].strip()
             print(fullname)
+            print(bname)
+            print(iteration)
             return (fullname, bname, iteration)
 
     assert False
@@ -268,7 +270,7 @@ def run_sim_benchmark(
         redirect = (
             f"-r --outdir={bname}_{iteration}_{x}_{scheme}_{threat}_{ap}_out"
         )
-        run_ref = f"{gem5} {redirect} {run_sim} {args} --sim_num {x}"  # |rotatelogs -t /data/schmitz/gem5_okapi_bench_runs/okapilogperl{x}.log  3G"
+        run_ref = f"{gem5} {redirect} {run_sim} {args} --sim_num {x}"  # --okapiReset"  # |rotatelogs -t /data/schmitz/gem5_okapi_bench_runs/okapilogperl{x}.log  3G"
         print(run_ref)
         print(f"Finished with code {os.system(run_ref)}")
 
@@ -305,7 +307,7 @@ def main():
     print(sys.argv)
     bench = sys.argv[1]
     task = sys.argv[2]
-
+    # reset = sys.argv[10]
     smp_p, smp_t, smp_r, cpt_t, tdiff, cpt_and_smp_p = [
         False,
         False,
@@ -455,8 +457,8 @@ def main():
         cleanup_cpts()
     os.chdir(cwd)
 
-    if smp_r:
-        sim_copy_results(bench, bname, iteration, wdir, tdir)
+    # if smp_r:
+    #    sim_copy_results(bench, bname, iteration, wdir, tdir)
     # Don't need results from other runs
     # else:
     #    copy_results(bname, iteration, wdir, tdir)

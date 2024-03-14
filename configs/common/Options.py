@@ -795,6 +795,13 @@ def addSimpointRunOptions(parser):
         help="Which Okapi variation to use",
     )
 
+    # Simulation options
+    parser.add_argument(
+        "--okapiReset",
+        action="store_true",
+        help="OkapiReset via fnop?",
+    )
+
 
 def addFSOptions(parser):
     from common.FSConfig import os_types

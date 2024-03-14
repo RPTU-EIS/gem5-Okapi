@@ -111,8 +111,7 @@ TLB::insert(Addr vpn, const TlbEntry &entry, uint64_t pcid)
         assert(newEntry->vaddr == vpn);
         return newEntry;
     }
-    //std::cout << "INSERT: " << std::endl;
-    //std::cout << "VPN: " << std::hex << vpn << std::endl;
+
     if (freeList.empty())
         evictLRU();
 
