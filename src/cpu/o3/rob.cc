@@ -273,7 +273,11 @@ ROB::insertInst(const DynInstPtr &inst)
             }
         }  else if (cpu->getSpeculativeLoadPolicy() ==
            SpeculativeLoadPolicy::Okapi) {
-            olderOkapiReset(inst, tid);
+            //only set reset successor thing if the reset via fnop
+            // is enabled to not unneccessarily stall insts
+            if (cpu->getOkapiReset()) {
+                olderOkapiReset(inst, tid);
+            }
             if (instIsShadowed(inst, tid)) {
                 DPRINTF(ROB, "Marking load inst PC %s "
                              "[sn:%llu] as unsafe under Okapi.\n",
