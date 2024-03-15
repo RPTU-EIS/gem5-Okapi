@@ -252,7 +252,7 @@ def run_tdiff_benchmark(bench, bname, iteration, index, scheme, ap):
 
 
 def run_sim_benchmark(
-    bench, bname, iteration, index, scheme, ap, threat, s_name=""
+    bench, bname, iteration, index, scheme, ap, threat, reset, s_name=""
 ):
     num_sims = get_num_points(bench, bname, iteration)
     args = get_extra_args(bench, index, not syscall_mode)
@@ -270,7 +270,10 @@ def run_sim_benchmark(
         redirect = (
             f"-r --outdir={bname}_{iteration}_{x}_{scheme}_{threat}_{ap}_out"
         )
-        run_ref = f"{gem5} {redirect} {run_sim} {args} --sim_num {x}"  # --okapiReset"  # |rotatelogs -t /data/schmitz/gem5_okapi_bench_runs/okapilogperl{x}.log  3G"
+        if reset == True:
+            run_ref = f"{gem5} {redirect} {run_sim} {args} --sim_num {x} --okapiReset"  # |rotatelogs -t /data/schmitz/gem5_okapi_bench_runs/okapilogperl{x}.log  3G"
+        else:
+            run_ref = f"{gem5} {redirect} {run_sim} {args} --sim_num {x}"  # --okapiReset"  # |rotatelogs -t /data/schmitz/gem5_okapi_bench_runs/okapilogperl{x}.log  3G"
         print(run_ref)
         print(f"Finished with code {os.system(run_ref)}")
 
@@ -342,9 +345,14 @@ def main():
 
     threat = sys.argv[7]
 
-    single = False
+    reset_s = ""
+    reset = False
+
     if len(sys.argv) == 9:
-        single = True
+        reset_s = sys.argv[8]
+
+    if reset_s == "okapiReset":
+        reset = True
 
     special = s_name != "blank"
 
@@ -398,7 +406,7 @@ def main():
     # simpoints and tdiff require multiple runs handled by external script
     if smp_r:
         run_sim_benchmark(
-            bench, bname, iteration, index, scheme, ap, threat, s_name
+            bench, bname, iteration, index, scheme, ap, threat, reset, s_name
         )
     elif tdiff:
         run_tdiff_benchmark(bench, bname, iteration, index, scheme, ap)
