@@ -1676,14 +1676,15 @@ InstructionQueue::addIfReady(const DynInstPtr &inst)
     if (cpu->getSpeculativeLoadPolicy() != SpeculativeLoadPolicy::STT) {
         //normal execution
         if (cpu->getSpeculativeLoadPolicy()
-            == SpeculativeLoadPolicy::Okapi) {
+            == SpeculativeLoadPolicy::Okapi &&
+            cpu->getOkapiReset()) {
             if (inst->isOkapiReset() && cpu->getROBCnt() == 0) {
                 DPRINTF(IQ, "ROB does not have a "
                             "head so there is an issue\n");
                 inst->setSquashed();
-            }
-            else if (inst->isOkapiReset() && (inst->seqNum
-            != cpu->getROBHeadInst()->seqNum)) {
+            } else if (inst->isOkapiReset() && (inst->seqNum
+                        != cpu->getROBHeadInst()->seqNum) &&
+                       cpu->getOkapiReset()) {
                 DPRINTF(IQ, "Add if not at head\n");
                 inst->addToStallList();
                 stalledOkapiResetList[inst->threadNumber].push_back(inst);
