@@ -802,6 +802,14 @@ def addSimpointRunOptions(parser):
         help="OkapiReset via fnop?",
     )
 
+    # Debug option
+    parser.add_argument(
+        "--noPrivSwitchReset",
+        default=False,
+        action="store_true",
+        help="Disable Resetting on privilege switches",
+    )
+
 
 def addFSOptions(parser):
     from common.FSConfig import os_types

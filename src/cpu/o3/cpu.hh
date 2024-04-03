@@ -515,6 +515,7 @@ class CPU : public BaseCPU
     //! Okapi Philipp Schmitz 02.08.2023
     const OkapiVariation okapiVariation;
     const bool okapiReset;
+    const bool privSwitchReset;
     const SpeculativeLoadPolicy speculativeLoadPolicy;
     const ThreatModel threatModel;
 
@@ -619,6 +620,12 @@ class CPU : public BaseCPU
     getOkapiReset () const
     {
         return okapiReset;
+    }
+
+    bool
+    getPrivSwitchReset () const
+    {
+        return privSwitchReset;
     }
 
     SpeculativeLoadPolicy

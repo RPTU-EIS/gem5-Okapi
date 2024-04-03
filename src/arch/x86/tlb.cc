@@ -243,6 +243,14 @@ localMiscRegAccess(bool read, RegIndex regNum,
 
 } // anonymous namespace
 
+
+void
+TLB::setPrivSwitchEnable(bool enable) {
+    privSwitchEnable = enable;
+    std::cout << "Set privSwitchEnable to " << enable << std::endl;
+}
+
+
 Fault
 TLB::translateInt(bool read, RequestPtr req, ThreadContext *tc)
 {
@@ -568,20 +576,22 @@ TLB::translate(const RequestPtr &req,
             delayedResponse = false;
             // Do paging protection checks.
             bool inUser = m5Reg.cpl == 3 && !(flags & CPL0FlagBit);
-
-            if (user && !inUser) {
-                user = false;
-                stats.privChange++;
-                flushDomainBits();
-                DPRINTF(TLB, "privilege change from User to not User\n");
-                //ticktickboom--;
-            } else if (!user && inUser) {
-                stats.privChange++;
-                flushDomainBits();
-                user = true;
-                DPRINTF(TLB, "privilege change from not User to User\n");
-
+            //only reset the bits if enabled
+            if (privSwitchEnable) {
+                if (user && !inUser) {
+                    user = false;
+                    stats.privChange++;
+                    flushDomainBits();
+                    DPRINTF(TLB, "privilege change from User to not User\n");
+                    //ticktickboom--;
+                } else if (!user && inUser) {
+                    stats.privChange++;
+                    flushDomainBits();
+                    user = true;
+                    DPRINTF(TLB, "privilege change from not User to User\n");
+                }
             }
+
             CR0 cr0 = tc->readMiscRegNoEffect(misc_reg::Cr0);
             bool badWrite = (!entry->writable && (inUser || cr0.wp));
             if ((inUser && !entry->user) ||
