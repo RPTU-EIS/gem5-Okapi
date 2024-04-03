@@ -144,6 +144,11 @@ class BaseCPU(ClockedObject):
         "enable OkapiReset via fnop",
     )
 
+    privSwitchReset = Param.Bool(
+        True,
+        "enable OkapiReset via Privilege Switch",
+    )
+
     threatModel = Param.ThreatModel(
         "Futuristic", "Whether to enable all shadows or only C-Shadows"
     )

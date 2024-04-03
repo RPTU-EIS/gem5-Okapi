@@ -110,6 +110,11 @@ class BaseTLB : public SimObject
     virtual void flushDomainBits() = 0;
 
     /**
+    * [Philipp Schmitz] Okapi, enable reset on privilege switch
+    */
+    virtual void setPrivSwitchEnable(bool enable) = 0;
+
+    /**
      * Take over from an old tlb context
      */
     virtual void takeOverFrom(BaseTLB *otlb) = 0;

@@ -111,6 +111,7 @@ namespace X86ISA
         uint64_t lruSeq;
 
         bool user = true;
+        bool privSwitchEnable = true;
         int ticktickboom = 2;
         AddrRange m5opRange;
 
@@ -139,6 +140,8 @@ namespace X86ISA
         //TODO maybe make it not purely virtual in
         // order to compile other ISAs without Okapi
         void flushDomainBits() override;
+
+        void setPrivSwitchEnable(bool enable) override;
 
       public:
 

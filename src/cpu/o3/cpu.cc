@@ -113,6 +113,7 @@ CPU::CPU(const BaseO3CPUParams &params)
                   params.activity),
       okapiVariation(params.okapiVariation),
       okapiReset(params.okapiReset),
+      privSwitchReset(params.privSwitchReset),
       speculativeLoadPolicy(params.speculativeLoadPolicy),
       threatModel(params.threatModel),
       globalSeqNum(1),
@@ -154,6 +155,12 @@ CPU::CPU(const BaseO3CPUParams &params)
             std::cout << "Okapi reset via fnop enabled" << std::endl;
         } else {
             std::cout << "Okapi reset via fnop disabled" << std::endl;
+        }
+        std::cout << "Okapi reset via privilege switch";
+        if (params.privSwitchReset) {
+            std::cout << " enabled" << std::endl;
+        } else {
+            std::cout << " disabled" << std::endl;
         }
     }
 
@@ -359,6 +366,8 @@ CPU::CPU(const BaseO3CPUParams &params)
         fatal("O3CPU %s has no interrupt controller.\n"
               "Ensure createInterruptController() is called.\n", name());
     }
+
+    mmu->dtb->setPrivSwitchEnable(privSwitchReset);
 }
 
 void
