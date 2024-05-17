@@ -25,8 +25,8 @@ from common.Caches import *
 
 gem5_root = "/data/schmitz/gem5-Okapi"
 
-disk_image = f"/data/schmitz/AmundKernelAndImage/x86-3.img"
-kernel = f"/import/home/schmitz/AmundKernelAndImage/plinux"
+disk_image = os.environ['IMAGE_PATH']
+kernel = os.environ['KERNEL_PATH']
 script_path = f"{gem5_root}/configs/cal/run_scripts"
 checkpoints = f"{gem5_root}/configs/cal/checkpoints"
 
@@ -206,7 +206,6 @@ def build_test_system_fs(args, test_mem_mode, cpu):
         )
     ]
 
-    print(args.mem_size)
     test_sys = makeLinuxX86System(test_mem_mode, 1, workload[0])
 
     test_sys.cache_line_size = 64
@@ -242,8 +241,7 @@ def build_test_system_fs(args, test_mem_mode, cpu):
 
     CacheConfig.config_cache(args, test_sys)
     MemConfig.config_mem(args, test_sys)
-    print("yo")
-    print(MemConfig)
+    
     root = Root(full_system=True, system=test_sys)
     print(test_sys)
     return (root, test_sys)
