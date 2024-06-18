@@ -1,0 +1,21 @@
+
+#!/bin/bash
+echo "gem5_init.sh: Starting initialization"
+# Mount necessary filesystems if required
+mount -t proc none /proc
+mount -t sysfs none /sys
+mount -t devtmpfs none /dev
+
+# Change directory to where benchmarks are located
+cd /root/400.perlbench
+
+# Optionally dump and reset stats
+/sbin/m5 dumpstats
+/sbin/m5 resetstats
+
+# Run benchmark or workload
+sh run_workload0.sh
+
+# Clean up and exit
+echo "Done :D"
+/sbin/m5 exit
