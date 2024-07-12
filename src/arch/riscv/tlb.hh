@@ -168,6 +168,14 @@ class TLB : public BaseTLB
     Fault doTranslate(const RequestPtr &req, ThreadContext *tc,
                       BaseMMU::Translation *translation, BaseMMU::Mode mode,
                       bool &delayed);
+
+    //!Okapi Philipp Schmitz 02.08.2023
+    //!Function to clear the Domain information
+    //TODO maybe make it not purely virtual in
+    // order to compile other ISAs without Okapi
+    void flushDomainBits() override {};
+
+    void setPrivSwitchEnable(bool enable) override {};
 };
 
 } // namespace RiscvISA
