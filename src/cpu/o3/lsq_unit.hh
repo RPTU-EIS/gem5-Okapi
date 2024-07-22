@@ -548,6 +548,17 @@ class LSQUnit
         statistics::Scalar okapiResetBlocks;
 
         /**
+         * Number of OkapiLoad Instructions that are blocked */
+        statistics::Scalar okapiLoadInstructionUnsafe;
+
+        /**
+         * Number of OkapiLoad Instructions that are blocked */
+        statistics::Scalar okapiLoadInstructionSafe;
+
+        /**
+         * Number of OkapiLoad Instructions that are blocked */
+        statistics::Scalar okapiLoadInstructionReplay;
+        /**
          * Number of Okapi Loads that hit in the TLB */
         statistics::Scalar okapiV2Blocks;
 

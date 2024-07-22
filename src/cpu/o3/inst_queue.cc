@@ -205,6 +205,14 @@ InstructionQueue::IQStats::IQStats(CPU *cpu, const unsigned &total_width)
              "removed from graph"),
     ADD_STAT(squashedNonSpecRemoved, statistics::units::Count::get(),
              "Number of squashed non-spec instructions that were removed"),
+    ADD_STAT(okapiLoadSquash, statistics::units::Count::get(),
+             "squashed Okapi load"),
+    ADD_STAT(okapiLoadReschedule, statistics::units::Count::get(),
+             "rescheduled Okapi load"),
+    ADD_STAT(okapiLoadInstructionReschedule, statistics::units::Count::get(),
+             "rescheduled OkapiLoad instruction"),
+    ADD_STAT(okapiLoadRescheduleV2, statistics::units::Count::get(),
+             "number of rescheduled Okapi loads that have been blocked by V2"),
     ADD_STAT(numIssuedDist, statistics::units::Count::get(),
              "Number of insts issued each cycle"),
     ADD_STAT(statFuBusy, statistics::units::Count::get(),
@@ -215,13 +223,6 @@ InstructionQueue::IQStats::IQStats(CPU *cpu, const unsigned &total_width)
                 statistics::units::Count, statistics::units::Cycle>::get(),
              "Inst issue rate", instsIssued / cpu->baseStats.numCycles),
     ADD_STAT(fuBusy, statistics::units::Count::get(), "FU busy when requested"),
-    ADD_STAT(okapiLoadSquash, statistics::units::Count::get(),
-             "squashed Okapi load"),
-    ADD_STAT(okapiLoadReschedule, statistics::units::Count::get(),
-             "rescheduled Okapi load"),
-    ADD_STAT(okapiLoadRescheduleV2, statistics::units::Count::get(),
-             "number of rescheduled Okapi loads that have been blocked by V2"),
-
     ADD_STAT(fuBusyRate, statistics::units::Rate<
                 statistics::units::Count, statistics::units::Count>::get(),
              "FU busy rate (busy events/executed inst)")
@@ -1240,12 +1241,12 @@ InstructionQueue::getDeferredMemInstToExecute()
 DynInstPtr
 InstructionQueue::getStalledMemInstToExecute() {
     for (const auto& it: stalledMemInsts) {
-        DPRINTF(IQ, "stalled inst [sn:%llu] PC %s is blocked"
+        DPRINTF(IQ, "stalled inst [sn:%llu] PC %s is blocked "
                     "reissued later\n", it->seqNum,
                 it->pcState());
     }
     DPRINTF(IQ, "stalled insts to execute\n");
-    for (ListIt it = stalledMemInsts.begin();
+    for (auto it = stalledMemInsts.begin();
          it != stalledMemInsts.end();
          ++it) {
         DPRINTF(IQ, "[sn:%llu] in stalled Mem Insts "
@@ -1253,87 +1254,39 @@ InstructionQueue::getStalledMemInstToExecute() {
         , (*it)->seqNum, (*it)->isUnsafeLoad(),
                 (*it)->translationStarted());
 
+        assert(!(*it)->translationStarted());
 
         //! Philipp Schmitz Okapi 02.08.2023
-        //! Adapt rescheduling logic to avoid live and deadlocks
-        //! These should not be here anymore
-        if ((*it)->translationCompleted()) {
-            //! 1) page table walk completed
-            std::cout << "PTW loads are deffered not stalled" << std::endl;
-            assert(0);
-            DPRINTF(IQ, "[sn:%llu] translation completed\n", (*it)->seqNum);
-            DynInstPtr mem_inst = std::move(*it);
-            //! if one walk is complete we can retry all other loads
-            stalledMemInsts.erase(it);
-            for (auto & stalledMemInst : stalledMemInsts) {
-                DPRINTF(IQ, "[sn:%llu] set to be possible "
-                            "to reschedule because of finished PTW\n",
-                            stalledMemInst->seqNum);
-                stalledMemInst->setPTWReschedule();
-            }
-            return mem_inst;
-        } else if ((*it)->isSquashed()) {
+
+        //! Remove squashed insts from list
+        if ((*it)->isSquashed()) {
+
             DPRINTF(IQ, "Remove [sn:%llu] from "
-                        "defferedMemInsts due to squash\n"
+                        "stalledMemInsts due to squash\n"
             , (*it)->seqNum);
             if ((*it)->isOkapiLoad()) {
                 iqStats.okapiLoadSquash++;
-                DPRINTF(IQ, "[sn:%llu] is okapi load\n"
-                , (*it)->seqNum);
-                if ((*it)->isNoLongerOkapiLoad()) {
-                    std::cout << "no longer okapi ";
-                    std::cout << " load is deprecated?" << std::endl;
-                    assert(0);
-                    DPRINTF(IQ, "[sn:%llu] squashed load is no "
-                                "longer okapi -> squash should be "
-                                "handled elsewhere\n", (*it)->seqNum);
-                    DynInstPtr mem_inst = std::move(*it);
-                    stalledMemInsts.erase(it);
-                    return mem_inst;
-                } else {
-                    if ((*it)->savedRequest != nullptr) {
-                        std::cout << "line 1276" << std::endl;
-                        assert(0);
-                        auto inst = (*it);
-                        inst->translationCompleted(true);
-                        auto saved_req = inst->savedRequest;
-                        DPRINTF(IQ, "[sn:%llu] still has a saved"
-                                    " request, maybe that's the issue\n"
-                        , (*it)->seqNum);
-                        for (const auto& r:  saved_req->_reqs) {
-                            saved_req->squashTranslation();
-                            saved_req->finish(NoFault, r,
-                                              nullptr, BaseMMU::Mode::Read);
-                        }
-                        (*it)->savedRequest = nullptr;
-                        DPRINTF(IQ, "[sn:%llu] tried to squash it\n"
-                        , (*it)->seqNum);
-                    } else {
-                        DPRINTF(IQ, "[sn:%llu] squashed "
-                                    "request is already reset\n"
-                        , (*it)->seqNum);
-                        DynInstPtr mem_inst = std::move(*it);
-                        stalledMemInsts.erase(it);
-                        return mem_inst;
-                    }
-                }
-            } else {
-                DPRINTF(IQ, "[sn:%llu] squashed load was "
-                            "never okapi -> squash should be"
-                            " handled elsewhere\n", (*it)->seqNum);
-                DynInstPtr mem_inst = std::move(*it);
-                stalledMemInsts.erase(it);
-                //TODO does this happen at all?
-                return mem_inst;
             }
-        } else if (!(*it)->isUnsafeLoad() &&
-                  (*it)->isOkapiLoad()) {// && !(*it)->isNoLongerOkapiLoad()) {
-            DPRINTF(IQ, "[sn:%llu] is no longer unsafe-> re-issue\n",
-                    (*it)->seqNum);
             DynInstPtr mem_inst = std::move(*it);
-            iqStats.okapiLoadReschedule++;
             stalledMemInsts.erase(it);
             return mem_inst;
+
+          //! Okapi blocked load is no longer speculative
+          //! Either miss in TLB or blocked due to
+          //! being an OkapiLoad Instruction
+        } else if (!(*it)->isUnsafeLoad() &&
+                  ((*it)->isOkapiLoad() || (*it)->isOkapiLoadInstruction())) {
+            DPRINTF(IQ, "[sn:%llu] is no longer unsafe-> re-issue\n",
+                    (*it)->seqNum);
+
+            if ((*it)->isOkapiLoad()) iqStats.okapiLoadReschedule++;
+            if ((*it)->isOkapiLoadInstruction())
+                iqStats.okapiLoadInstructionReschedule++;
+
+            DynInstPtr mem_inst = std::move(*it);
+            stalledMemInsts.erase(it);
+            return mem_inst;
+          //! Okapi blocked load is no longer suspicious
         } else if (cpu->getOkapiVariation() == OkapiVariation::v2 &&
                    !(*it)->isOkapiV2Load() && (*it)->isBlockPCBlocked()) {
 
@@ -1345,8 +1298,7 @@ InstructionQueue::getStalledMemInstToExecute() {
                 stalledMemInsts.erase(it);
                 iqStats.okapiLoadRescheduleV2++;
                 return mem_inst;
-        }
-        else if (!(*it)->isUnsafeLoad() && !(*it)->translationStarted() &&
+        } else if (!(*it)->isUnsafeLoad() && !(*it)->translationStarted() &&
                  (cpu->getSpeculativeLoadPolicy() ==
                   SpeculativeLoadPolicy::NaiveDelay ||
                   cpu->getSpeculativeLoadPolicy() ==

@@ -54,6 +54,7 @@ Decoder::doResetState()
     emi.rex = 0;
     emi.legacy = 0;
     emi.vex = 0;
+    emi.okapi_load = 0;
 
     emi.opcode.type = BadOpcode;
     emi.opcode.op = 0;
@@ -201,7 +202,17 @@ Decoder::doPrefixState(uint8_t nextByte)
         // Segment override prefixes
       case CSOverride:
       case DSOverride:
+          DPRINTF(Decoder, "Found segment override.\n");
+            emi.legacy.seg = prefix;
+            break;
       case ESOverride:
+          /**
+           * Philipp Schmitz 07.05.2024
+           * Use ESOverride prefix for marking OkapiLoad
+           */
+          DPRINTF(Decoder, "Found OkapiLoad prefix.\n");
+          emi.okapi_load = 1;
+          break;
       case FSOverride:
       case GSOverride:
       case SSOverride:
@@ -733,6 +744,10 @@ Decoder::decode(PCStateBase &next_pc)
     }
 
     si = decode(emi, origPC);
+
+    if (emi.okapi_load == 1) {
+        si->setOkapiLoadInstruction();
+    }
     return si;
 }
 

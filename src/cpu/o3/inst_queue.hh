@@ -548,6 +548,8 @@ class InstructionQueue
         statistics::Scalar okapiLoadSquash;
         /** Stat for number of rescheduled Okapi loads that missed before. */
         statistics::Scalar okapiLoadReschedule;
+        /** Stat for number of rescheduled Okapi loads that missed before. */
+        statistics::Scalar okapiLoadInstructionReschedule;
         /** Stat for number of rescheduled Okapi
          * loads that have been blocked by V2 before. */
         statistics::Scalar okapiLoadRescheduleV2;

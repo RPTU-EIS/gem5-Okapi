@@ -419,6 +419,8 @@ class ROB
         statistics::Scalar branches_with_tainted_args;
 
         statistics::Scalar syscalls;
+
+        statistics::Scalar okapiLoadInstructions;
     } stats;
 };
 

@@ -78,6 +78,8 @@ namespace X86ISA
         TlbEntry *lookupDomain(Addr va, uint16_t domain,
                                bool update_lru = true);
 
+        TlbEntry *lookupOkapiLoad(Addr va, bool update_lru = true);
+
         void setConfigAddress(uint32_t addr);
         //concatenate Page Addr and pcid
         inline Addr concAddrPcid(Addr vpn, uint64_t pcid)
@@ -127,6 +129,7 @@ namespace X86ISA
             statistics::Scalar wrMisses;
             statistics::Scalar privChange;
             statistics::Scalar bitsReset;
+            statistics::Scalar okapiLoads;
         } stats;
 
         Fault translateInt(bool read, RequestPtr req, ThreadContext *tc);

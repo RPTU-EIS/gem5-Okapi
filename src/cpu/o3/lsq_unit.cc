@@ -275,12 +275,18 @@ LSQUnit::LSQUnitStats::LSQUnitStats(statistics::Group *parent)
                "Number of okapi loads that succeed"),
       ADD_STAT(okapiResetBlocks, statistics::units::Count::get(),
                "Number of okapi loads that are blocked by okapiResets"),
+      ADD_STAT(okapiLoadInstructionUnsafe, statistics::units::Count::get(),
+               "Number of OkapiLoad instructions that are blocked"),
+      ADD_STAT(okapiLoadInstructionSafe, statistics::units::Count::get(),
+               "Number of OkapiLoad instructions that are never blocked"),
+      ADD_STAT(okapiLoadInstructionReplay, statistics::units::Count::get(),
+               "Number of OkapiLoad insts that re-issued non-speculatively"),
+      ADD_STAT(okapiV2Blocks, statistics::units::Count::get(),
+               "Number of okapi loads that are blocked to prevent v2 gadgets"),
       ADD_STAT(okapiMisses, statistics::units::Count::get(),
                "Number of okapi loads that need to be rescheduled"),
       ADD_STAT(okapiLoadsInitiated, statistics::units::Count::get(),
                "Number of okapi loads that need to be rescheduled"),
-      ADD_STAT(okapiV2Blocks, statistics::units::Count::get(),
-               "Number of okapi loads that are blocked to prevent v2 gadgets"),
       ADD_STAT(privRequests, statistics::units::Count::get(),
                "Number of privileged requests to dtlb"),
       ADD_STAT(okapiLoadsRescheduled, statistics::units::Count::get(),
@@ -620,7 +626,12 @@ LSQUnit::executeLoad(const DynInstPtr &inst)
     if (!inst->isUnsafeLoad()) {
         if (!inst->isHasBeenSentBefore()) {
             stats.safeLoadInitiated++;
+            if (inst->isOkapiLoadInstruction())
+                stats.okapiLoadInstructionSafe++;
         }
+        if (inst->isOkapiLoadInstruction() && inst->isHasBeenSentBefore())
+            stats.okapiLoadInstructionReplay++;
+
         if (inst->isOkapiLoad()) stats.okapiLoadsRescheduled++;
         DPRINTF(LSQUnit, "Safe load PC %s, [sn:%lli]\n",
                 inst->pcState(), inst->seqNum);
@@ -641,115 +652,86 @@ LSQUnit::executeLoad(const DynInstPtr &inst)
             load_fault = NoFault;
         } else if (cpu->getSpeculativeLoadPolicy() ==
           SpeculativeLoadPolicy::Okapi) {
-            //initiate the load
-            //it has to go to TLB
 
-            //!Okapi v1 send all loads to TLB
-            if (cpu->getOkapiVariation() == OkapiVariation::v1) {
+            //! First Case: OkapiLoadInstruction or behind OkapiReset
+            //! Instruction does not go to the TLB speculatively
+            //! Instruction does not set the safe access bit
+            if (inst->isOkapiLoadInstruction() ||
+                    inst->isOkapiResetSuccessor()) {
+                //Do not initiate the load it needs to be delayed
+
+                inst->addToStallList();
+                load_fault = NoFault;
+
+                //! stats and diagnosis
                 if (inst->isOkapiResetSuccessor()) {
-                    //! can only be a reset successor if resetting is enabled
-                    assert(cpu->getOkapiReset());
-                    //Do not initiate unsafe loads that follow an Okapi reset
-                    DPRINTF(LSQUnit, "Delaying load PC %s, [sn:%lli]"
-                                     " because it is behind an Okapi reset\n",
-                            inst->pcState(), inst->seqNum);
-                    inst->addToStallList();
                     stats.okapiResetBlocks++;
-                    load_fault = NoFault;
-                } else {
+                    assert(cpu->getOkapiReset());
+                    DPRINTF(LSQUnit, "Delaying load PC %s, [sn:%lli]"
+                                     " because it is behind "
+                                     "OkapiReset Instruction\n",
+                            inst->pcState(), inst->seqNum);
+                }  else {
+                    stats.okapiLoadInstructionUnsafe++;
+                    DPRINTF(LSQUnit, "Delaying load PC %s, [sn:%lli]"
+                                     " because it is a speculative "
+                                     "OkapiLoad Instruction\n",
+                            inst->pcState(), inst->seqNum);
+                }
+            } else if (!inst->isOkapiV2Load()) {
+                //! Okapi v2 only send loads to TLB if it does not cross a
+                //! page boundary speculatively or if it is a safe load
+                //! to reduce the attack surface
+
+                //load is not behind a suspicious
+                // instruction so there is no danger for a V2 gadget
+                inst->removeFromStallList();
+                load_fault = inst->initiateAcc();
+                inst->unsetBlockPCBlocked();
+
+            } else {
+
+                if (cpu->getROBHeadInst()->getBlockPC()
+                    == inst->getBlockPC()) {
                     inst->removeFromStallList();
-                    load_fault = inst->initiateAcc();
                     inst->unsetBlockPCBlocked();
-                }
+                    inst->clearOkapiV2Load();
+                    DPRINTF(LSQUnit, "Current block PC %s "
+                                     "does match any "
+                                     "of the following:\n",
+                            inst->getBlockPC());
 
+                    load_fault = inst->initiateAcc();
+                } else if (inst->translationCompleted()) {
+                    //! PC matched with head the frist time
+                    //! and it hit but it
+                    //! got blocked by the cache but it is
+                    //! translated so it should be safe to issue
+                    std::cout << "Why does this happen" << std::endl;
+                    assert(0);
 
-            //! Okapi v2 only send loads to TLB if the PC is on the same
-            //! page as the PC of ROB head or if it is a safe load
-            //! to reduce the attack surface
-            } else if (cpu->getOkapiVariation() == OkapiVariation::v2) {
-                if (!inst->isOkapiV2Load()) {
-                    if (inst->isOkapiResetSuccessor()) {
-                        //! can only be a reset successor
-                        //! if resetting is enabled
-                        assert(cpu->getOkapiReset());
-                        //Do not initiate unsafe loads
-                        // that follow an Okapi reset
-                        DPRINTF(LSQUnit, "Delaying load PC %s, [sn:%lli]"
-                                         " because it is behind"
-                                         " an Okapi reset\n",
-                                inst->pcState(), inst->seqNum);
-                        inst->addToStallList();
-                        stats.okapiResetBlocks++;
-                        load_fault = NoFault;
-                    } else {
-                        //load is not behind a suspicious
-                        // instruction so there is no danger for a V2 gadget
-                        inst->removeFromStallList();
-                        load_fault = inst->initiateAcc();
-                        inst->unsetBlockPCBlocked();
-                    }
+                    inst->removeFromStallList();
+                    inst->unsetBlockPCBlocked();
+                    load_fault = inst->initiateAcc();
                 } else {
-                    if (inst->isOkapiResetSuccessor()) {
-                        //! can only be a reset successor
-                        //! if resetting is enabled
-                        assert(cpu->getOkapiReset());
-                        //Do not initiate unsafe loads
-                        // that follow an Okapi reset
-                        DPRINTF(LSQUnit, "Delaying load PC %s, [sn:%lli]"
-                                         " because it is behind"
-                                         " an Okapi reset\n",
-                                inst->pcState(), inst->seqNum);
-                        inst->addToStallList();
-                        stats.okapiResetBlocks++;
-                        load_fault = NoFault;
-                    } else {
-                        bool found = false;
-                        //for (const auto &pc: cpu->getROBBlockPCSet()) {
-                            if (cpu->getROBHeadInst()->getBlockPC()
-                                == inst->getBlockPC()) {
-                                found = true;
-                                //break;
-                            }
-                        //}
-                        if (found) {
-                            inst->removeFromStallList();
-                            inst->unsetBlockPCBlocked();
-                            DPRINTF(LSQUnit, "Current block PC %s "
-                                             "does match any "
-                                             "of the following:\n",
-                                    inst->getBlockPC());
-                            //for (const auto &it: cpu->getROBBlockPCSet()) {
-                            //    DPRINTF(LSQUnit, "block PC %s\n",
-                            //            it);
-                            //}
-                            load_fault = inst->initiateAcc();
-                        } else if (inst->translationCompleted()) {
-                            //! PC matched with head the frist time
-                            //! and it hit but it
-                            //! got blocked by the cache but it is
-                            //! translated so it should be safe to issue
-                            inst->removeFromStallList();
-                            inst->unsetBlockPCBlocked();
-                            load_fault = inst->initiateAcc();
-                        } else {
-                            DPRINTF(LSQUnit, "Current block PC %s does "
-                                             "not match any of "
-                                             "the following:\n",
-                                    inst->getBlockPC());
+                DPRINTF(LSQUnit, "Current block PC %s does "
+                                 "not match any of "
+                                 "the following:\n",
+                        inst->getBlockPC());
 
-                            //Do not initiate the load it needs to be delayed
-                            //because the PC at ROB head does not match
-                            DPRINTF(LSQUnit, "Delaying load PC %s, [sn:%lli] "
-                                             "because PC does not match with"
-                                             " set\n",
-                                    inst->pcState(), inst->seqNum);
-                            inst->addToStallList();
-                            inst->setBlockPCBlocked();
-                            load_fault = NoFault;
-                        }
-                    }
+                //Do not initiate the load it needs to be delayed
+                //because the PC at ROB head does not match
+                DPRINTF(LSQUnit, "Delaying load PC %s, [sn:%lli] "
+                                 "because PC does not match with"
+                                 " set\n",
+                        inst->pcState(), inst->seqNum);
+                inst->addToStallList();
+                inst->setBlockPCBlocked();
+                load_fault = NoFault;
                 }
+
             }
+
 
             /** separate stats to have only first issue*/
             if (!inst->isHasBeenSentBefore()) {
@@ -768,6 +750,7 @@ LSQUnit::executeLoad(const DynInstPtr &inst)
             inst->setHasBeenSentBefore();
 
         } else {
+            //! No other mitigation currently has
             assert(0);
         }
     }

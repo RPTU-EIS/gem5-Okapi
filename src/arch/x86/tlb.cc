@@ -152,6 +152,22 @@ TLB::lookup(Addr va, bool update_lru)
     return entry;
 }
 
+TlbEntry *
+TLB::lookupOkapiLoad(Addr va, bool update_lru)
+{
+    TlbEntry *entry = trie.lookup(va);
+    //! Okapi [Philipp Schmitz] 02.06.2024
+    //! Only update LRU if it is a secure lookup
+    if (entry && update_lru) {
+        entry->lruSeq = nextSeq();
+        //TODO pass right value
+        entry->inDomain = 0;
+    }
+    if (entry) entry->inDomain = 0;
+
+    return entry;
+}
+
 //! Okapi Philipp Schmitz 02.08.2023
 //! Only update LRU if it is a secure lookup
 //! Use this function if we store different
@@ -395,6 +411,9 @@ TLB::translate(const RequestPtr &req,
         return translateInt(mode == BaseMMU::Read, req, tc);
     }
 
+    //!Request from OkapiLoadInstruction should never be sent speculatively
+    assert(!(req->getSpeculative() && req->getOkapiLoadInstruction()));
+
     Addr vaddr = req->getVaddr();
     DPRINTF(TLB, "Translating vaddr %#x.\n", vaddr);
 
@@ -483,6 +502,10 @@ TLB::translate(const RequestPtr &req,
             if (req->getSpeculative()) {
                 //TODO check domain id
                 entry = lookupDomain(pageAlignedVaddr, 1);
+            } else if (req->getOkapiLoadInstruction()) {
+                //! OkapiLoadInstruction must not be issued speculatively
+                assert(!req->getSpeculative());
+                entry = lookupOkapiLoad(pageAlignedVaddr);
             } else {
                 entry = lookup(pageAlignedVaddr);
             }
@@ -614,7 +637,11 @@ TLB::translate(const RequestPtr &req,
             DPRINTF(TLB, "Safe-access-bits was %s now",
                     "set to true",
                     entry->inDomain);
-            entry->inDomain = 1;
+            if (req->getOkapiLoadInstruction()) {
+                entry->inDomain = 0;
+            } else {
+                entry->inDomain = 1;
+            }
 
             req->setPaddr(paddr);
             if (entry->uncacheable)
@@ -706,16 +733,18 @@ TLB::TlbStats::TlbStats(statistics::Group *parent)
              "TLB accesses on write requests"),
     ADD_STAT(rdMisses, statistics::units::Count::get(),
              "TLB misses on read requests"),
+    ADD_STAT(tlbEntries, statistics::units::Count::get(),
+             "Number of used entries"),
     ADD_STAT(specRdMisses, statistics::units::Count::get(),
              "speculative TLB misses on read requests"),
     ADD_STAT(wrMisses, statistics::units::Count::get(),
              "TLB misses on write requests"),
-    ADD_STAT(tlbEntries, statistics::units::Count::get(),
-             "Number of used entries"),
     ADD_STAT(privChange, statistics::units::Count::get(),
              "Number of privilege changes"),
     ADD_STAT(bitsReset, statistics::units::Count::get(),
-             "Number of bits that have been reset")
+             "Number of bits that have been reset"),
+    ADD_STAT(okapiLoads, statistics::units::Count::get(),
+             "Number requests coming from OkapiLoads")
 {
 }
 

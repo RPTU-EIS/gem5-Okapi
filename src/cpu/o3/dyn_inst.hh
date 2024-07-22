@@ -627,6 +627,9 @@ class DynInst : public ExecContext, public RefCounted
     bool isHtmCmd() const { return staticInst->isHtmCmd(); }
 
     bool isOkapiReset() const { return staticInst->isOkapiReset(); }
+    bool isOkapiLoadInstruction() const {
+        return staticInst->isOkapiLoadInstruction(); }
+
     bool isLFence() const { return staticInst->isLFence(); }
     bool isMFence() const { return staticInst->isMFence(); }
     uint64_t

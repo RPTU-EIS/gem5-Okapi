@@ -799,6 +799,7 @@ def addSimpointRunOptions(parser):
     parser.add_argument(
         "--okapiReset",
         action="store_true",
+        default=True,
         help="OkapiReset via fnop?",
     )
 

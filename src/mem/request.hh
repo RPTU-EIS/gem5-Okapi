@@ -403,6 +403,11 @@ class Request : public Extensible<Request>
      */
     bool _speculative = false;
 
+    //!Okapi Philipp Schmitz 13.05.2024
+    /**
+     * Is instruction that issued the request an OkapiLoad instruction?
+     */
+    bool _okapi_load_instruction = false;
 
     /**
      * The size of the request. This field must be set when vaddr or
@@ -505,6 +510,7 @@ class Request : public Extensible<Request>
      */
     Request(Addr paddr, unsigned size, Flags flags, RequestorID id) :
         _paddr(paddr), _inDomain(0), _speculative(false),
+        _okapi_load_instruction(false),
         _size(size), _requestorId(id), _time(curTick())
     {
         _flags.set(flags);
@@ -515,7 +521,8 @@ class Request : public Extensible<Request>
     Request(Addr vaddr, unsigned size, Flags flags,
             RequestorID id, Addr pc, ContextID cid,
             AtomicOpFunctorPtr atomic_op=nullptr):
-                _inDomain(0), _speculative(false)
+                _inDomain(0), _speculative(false),
+                _okapi_load_instruction(false)
     {
         setVirt(vaddr, size, flags, id, pc, std::move(atomic_op));
         setContext(cid);
@@ -527,6 +534,7 @@ class Request : public Extensible<Request>
           _paddr(other._paddr),
           _inDomain(other._inDomain),
           _speculative(other._speculative),
+          _okapi_load_instruction(other._okapi_load_instruction),
           _size(other._size),
           _byteEnable(other._byteEnable),
           _requestorId(other._requestorId),
@@ -645,6 +653,17 @@ class Request : public Extensible<Request>
         _speculative = spec;
     }
 
+    //!Okapi Philipp Schmitz 13.05.2024
+    /**
+     * Set the instruction of the request
+     * @param inst
+     */
+    void
+    setOkapiLoadInstruction(bool okapi_load_instruction)
+    {
+        _okapi_load_instruction = okapi_load_instruction;
+    }
+
     /**
      * Generate two requests as if this request had been split into two
      * pieces. The original request can't have been translated already.
@@ -692,13 +711,22 @@ class Request : public Extensible<Request>
     {
         return _inDomain;
     }
-    //!PrivateDomain Philipp Schmitz 16.02.2023
+    //!Okapi Philipp Schmitz 16.02.2023
     bool
     getSpeculative() const
     {
         return _speculative;
 
     }
+
+    //!Okapi Philipp Schmitz 13.05.2024
+    bool
+    getOkapiLoadInstruction() const
+    {
+        return _okapi_load_instruction;
+
+    }
+
 
     /**
      * Accessor for instruction count.

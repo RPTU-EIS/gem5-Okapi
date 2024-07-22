@@ -252,7 +252,16 @@ def run_tdiff_benchmark(bench, bname, iteration, index, scheme, ap):
 
 
 def run_sim_benchmark(
-    bench, bname, iteration, index, scheme, ap, threat, reset, s_name=""
+    bench,
+    bname,
+    iteration,
+    index,
+    scheme,
+    ap,
+    threat,
+    reset,
+    privSwitchReset,
+    s_name="",
 ):
     num_sims = get_num_points(bench, bname, iteration)
     args = get_extra_args(bench, index, not syscall_mode)
@@ -267,13 +276,24 @@ def run_sim_benchmark(
     for x in range(num_sims):
         # redirect = f"--debug-flags=O3CPUAll,TLB,PageTableWalker"# -r --outdir={bname}_{iteration}_{x}_out_dbg"# --debug-start=6358920803567"#
         # redirect = f"--debug-flags=O3PipeView -r --outdir={bname}_{iteration}_{x}_{scheme}_dbg_out"
+        # redirect = (
+        #    f"--debug-flags=O3PipeView  -r --outdir={bname}_{iteration}_{x}_{scheme}_{threat}_{ap}_out"
+        # )4169417233176
         redirect = (
-            f"-r --outdir={bname}_{iteration}_{x}_{scheme}_{threat}_{ap}_out"
+            f" -r --outdir={bname}_{iteration}_{x}_{scheme}_{threat}_{ap}_out"
         )
-        if reset == True:
-            run_ref = f"{gem5} {redirect} {run_sim} {args} --sim_num {x} --okapiReset"  # |rotatelogs -t /data/schmitz/gem5_okapi_bench_runs/okapilogperl{x}.log  3G"
+        if reset == True and privSwitchReset == True:
+            # run_ref = f"{gem5} --debug-flags=O3CPUAll,TLB,PageTableWalker {redirect} --debug-start=4169416689720 {run_sim} {args} --sim_num {x} --okapiReset --noPrivSwitchReset "  # |rotatelogs -t /data/schmitz/gem5_okapi_bench_runs/okapilogperl{x}.log  3G"
+            run_ref = f"{gem5} {redirect} {run_sim} {args} --sim_num {x} --okapiReset --noPrivSwitchReset "
+        elif reset == True and privSwitchReset == False:
+            # run_ref = f"{gem5} --debug-flags=O3CPUAll,TLB,PageTableWalker {redirect} --debug-start=4169416689720 {run_sim} {args} --sim_num {x} --okapiReset "  # |rotatelogs -t /data/schmitz/gem5_okapi_bench_runs/okapilogperl{x}.log  3G"
+            run_ref = f"{gem5} {redirect} {run_sim} {args} --sim_num {x} --okapiReset "
+        elif reset == False and privSwitchReset == True:
+            # run_ref = f"{gem5} --debug-flags=O3CPUAll,TLB,PageTableWalker {redirect} --debug-start=4169416689720 {run_sim} {args} --sim_num {x} --noPrivSwitchReset "  # |rotatelogs -t /data/schmitz/gem5_okapi_bench_runs/okapilogperl{x}.log  3G"
+            run_ref = f"{gem5} {redirect} {run_sim} {args} --sim_num {x} --noPrivSwitchReset "
         else:
-            run_ref = f"{gem5} {redirect} {run_sim} {args} --sim_num {x}"  # --okapiReset"  # |rotatelogs -t /data/schmitz/gem5_okapi_bench_runs/okapilogperl{x}.log  3G"
+            # run_ref = f"{gem5} --debug-flags=O3CPUAll,TLB,PageTableWalker {redirect} --debug-start=4169416689720 {run_sim} {args} --sim_num {x} "  # --okapiReset"  # |rotatelogs -t /data/schmitz/gem5_okapi_bench_runs/okapilogperl{x}.log  3G"
+            run_ref = f"{gem5} {redirect} {run_sim} {args} --sim_num {x} "  # --okapiReset"
         print(run_ref)
         print(f"Finished with code {os.system(run_ref)}")
 
@@ -347,12 +367,21 @@ def main():
 
     reset_s = ""
     reset = False
+    privSwitchReset = False
 
     if len(sys.argv) == 9:
         reset_s = sys.argv[8]
 
     if reset_s == "okapiReset":
         reset = True
+    elif reset_s == "noPrivSwitchReset":
+        privSwitchReset = True
+
+    if len(sys.argv) == 10:
+        reset_s = sys.argv[8]
+
+    if reset_s == "noPrivSwitchReset":
+        privSwitchReset = True
 
     special = s_name != "blank"
 
@@ -406,7 +435,16 @@ def main():
     # simpoints and tdiff require multiple runs handled by external script
     if smp_r:
         run_sim_benchmark(
-            bench, bname, iteration, index, scheme, ap, threat, reset, s_name
+            bench,
+            bname,
+            iteration,
+            index,
+            scheme,
+            ap,
+            threat,
+            reset,
+            privSwitchReset,
+            s_name,
         )
     elif tdiff:
         run_tdiff_benchmark(bench, bname, iteration, index, scheme, ap)

@@ -227,6 +227,13 @@ ROB::insertInst(const DynInstPtr &inst)
                 inst->pcState(), inst->seqNum);
     }
 
+    if (inst->isOkapiLoadInstruction()) {
+        DPRINTF(ROB, "Okapi load encountered inst PC %s "
+                     "[sn:%llu].\n",
+                inst->pcState(), inst->seqNum);
+        stats.okapiLoadInstructions++;
+    }
+
 
     assert(numInstsInROB != numEntries);
 
@@ -384,6 +391,9 @@ ROB::retireHead(ThreadID tid)
     head_inst->clearInROB();
     head_inst->setCommitted();
 
+    if (!head_inst->isSquashed()) {
+        //std::cout << "Retire OkapiLoad" << std::endl;
+    }
     //Update "Global" Head of ROB
     updateHead();
 
@@ -596,7 +606,7 @@ ROB::updateShadowedInsts(ThreadID tid)
     DPRINTF(ROB, "[tid:%i] Try to unshadow V2 instructions.\n", tid);
     //! find the first v2 suspicious instruction behind C shadow
     bool found_unsafe = false;
-    for (auto instIt : instList[tid])
+    for (const auto& instIt : instList[tid])
     {
         // Don't cast shadow on ROB head
         if (instIt != instList[tid].front()) {
@@ -619,9 +629,7 @@ ROB::updateShadowedInsts(ThreadID tid)
             DPRINTF(ROB, "V2 Unshadow inst PC %s "
                          "[sn:%llu].\n",
                     instIt->pcState(), instIt->seqNum);
-            //instIt->clearUnsafeLoad();
             instIt->clearOkapiV2Load();
-            //unshadowedInsts.push_back(instIt);
 
         }
 
@@ -935,18 +943,22 @@ ROB::ROBStats::ROBStats(statistics::Group *parent)
              "The number of loads in the ROB"),
     ADD_STAT(okapiLoads, statistics::units::Count::get(),
              "The number of unsafe loads under Okapi"),
+    ADD_STAT(okapiV2Loads, statistics::units::Count::get(),
+             "The number of loads that are unsafe under"
+             " the futuristic model inserted in the ROB"),
+    ADD_STAT(okapiV1Loads, statistics::units::Count::get(),
+             "The number of loads that are unsafe"
+             " under the spectre model inserted in the ROB"),
+    ADD_STAT(okapiLoadsSquashedBeforeIssue, statistics::units::Count::get(),
+             "The number of unsafe loads under Okapi squashed before issue"),
     ADD_STAT(taints, statistics::units::Count::get(),
              "The number of taints initialized in the ROB"),
     ADD_STAT(branches_with_tainted_args, statistics::units::Count::get(),
              "The number of branches with tainted args"),
     ADD_STAT(syscalls, statistics::units::Count::get(),
              "The number of syscalls inserted into the ROB"),
-    ADD_STAT(okapiV2Loads, statistics::units::Count::get(),
-             "The number of loads that are unsafe under"
-             " the futuristic model inserted in the ROB"),
-    ADD_STAT(okapiV1Loads, statistics::units::Count::get(),
-             "The number of loads that are unsafe"
-             " under the spectre model inserted in the ROB")
+    ADD_STAT(okapiLoadInstructions, statistics::units::Count::get(),
+             "The number of OkapiLoad instructions inserted into the ROB")
 
 {
 }

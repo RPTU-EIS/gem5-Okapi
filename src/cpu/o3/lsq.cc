@@ -1238,6 +1238,7 @@ LSQ::LSQRequest::addReq(Addr addr, unsigned size,
         //! Okapi Philipp Schmitz 02.08.2023
         if (isLoad()) {
             req->setSpeculative(is_squashable);
+            req->setOkapiLoadInstruction(_inst->isOkapiLoadInstruction());
         }
         /* If the request is marked as NO_ACCESS, setup a local access */
         if (_flags.isSet(Request::NO_ACCESS)) {

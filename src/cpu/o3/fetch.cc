@@ -1087,6 +1087,9 @@ Fetch::buildInst(ThreadID tid, StaticInstPtr staticInst,
     DPRINTF(Fetch, "[tid:%i] Instruction is: %s\n", tid,
             instruction->staticInst->disassemble(this_pc.instAddr()));
 
+    DPRINTF(Fetch, "[tid:%i] Instruction is OkapiLoad?: %s\n", tid,
+            instruction->staticInst->isOkapiLoadInstruction());
+
 #if TRACING_ON
     if (trace) {
         instruction->traceData =
@@ -1292,6 +1295,10 @@ Fetch::fetch(bool &status_change)
                     staticInst = curMacroop->fetchMicroop(this_pc.microPC());
                 }
                 newMacro |= staticInst->isLastMicroop();
+            }
+
+            if (curMacroop && curMacroop->isOkapiLoadInstruction()) {
+                staticInst->setOkapiLoadInstruction();
             }
 
             DynInstPtr instruction = buildInst(
