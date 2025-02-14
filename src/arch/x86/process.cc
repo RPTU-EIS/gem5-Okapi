@@ -603,6 +603,7 @@ X86_64Process::initState()
             // Setting pcide bit in CR4
             CR4 cr4 = tc->readMiscRegNoEffect(misc_reg::Cr4);
             cr4.pcide = 1;
+            cr4.pke = 1;
             tc->setMiscReg(misc_reg::Cr4, cr4);
         }
     }

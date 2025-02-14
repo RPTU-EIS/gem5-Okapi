@@ -196,7 +196,6 @@ TLB::lookupDomain(Addr va, uint16_t domain, bool update_lru)
 void
 TLB::flushAll()
 {
-    std::cout << "flush All" << std::endl;
     DPRINTF(TLB, "Invalidating all entries.\n");
     for (unsigned i = 0; i < size; i++) {
         if (tlb[i].trieHandle) {
@@ -612,6 +611,48 @@ TLB::translate(const RequestPtr &req,
                     flushDomainBits();
                     user = true;
                     DPRINTF(TLB, "privilege change from not User to User\n");
+                }
+            }
+            // Check if memory protection keys are enabled
+
+            if (cr4.pke) { //TODO maybe disable for debugging
+
+                PKRU pkru = tc->readMiscRegNoEffect(misc_reg::PKRU);
+                auto permy = bits(pkru, 2 * entry->memoryKey + 1,
+                                  2 * entry->memoryKey);
+
+
+                /** For a key i ∊ ⟦0; 15⟧ the bit 2i of
+                 * the PKRU block any data read or write
+                 * if set to 1 (it is called access disable
+                 * bit, or AD) and the bit 2i+1 disable
+                 * only write (called write disable bit, WD).
+                 * Thus, we can both read and write
+                 * if the two bits (WD, AD) are set to (0, 0),
+                 * only read with (1, 0) and have
+                 * no access with (0, 1) or (1, 1).
+
+                */
+                if (bits(permy, 0)) {
+                    std::cout << "Illegal Access to address ";
+                    std::cout << std::hex << vaddr;
+                    std::cout << " PKRU value is (-,1) " << std::hex << pkru;
+                    std::cout << std::dec << " with key ";
+                    std::cout << entry->memoryKey << std::endl;
+
+
+                    return std::make_shared<PageFault>(vaddr, true,
+                                                       mode, inUser,
+                                                       false);
+                } else if (bits(permy,1) && mode == BaseMMU::Write) {
+                    std::cout << "Illegal write to address ";
+                    std::cout << std::hex << vaddr;
+                    std::cout << " PKRU value is (1,0) " << std::hex << pkru;
+                    std::cout << std::dec << " with key ";
+                    std::cout << entry->memoryKey << std::endl;
+                    return std::make_shared<PageFault>(vaddr, true,
+                                                       mode, inUser,
+                                                       false);
                 }
             }
 

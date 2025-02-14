@@ -86,6 +86,9 @@ namespace X86ISA
         bool global;
         // A bit used to form an index into the PAT table.
         bool patBit;
+        // Four bit value used to index the PKRU register to check
+        // memory protection (only enabled if bit 22 in Cr4 is set)
+        unsigned short memoryKey;
         // Whether or not memory on this page can be executed.
         bool noExec;
         // A sequence number to keep track of LRU.
@@ -142,19 +145,37 @@ namespace X86ISA
     // very erratic and would make a mess here. It might be moved here at some
     // point in the future.
     BitUnion64(PageTableEntry)
-        Bitfield<63> nx;
+        Bitfield<63> nx; //not executable
+        Bitfield<62, 59> mpk; //memory protection key
         Bitfield<51, 12> base;
-        Bitfield<11, 9> avl;
-        Bitfield<8> g;
-        Bitfield<7> ps;
-        Bitfield<6> d;
-        Bitfield<5> a;
-        Bitfield<4> pcd;
-        Bitfield<3> pwt;
-        Bitfield<2> u;
-        Bitfield<1> w;
-        Bitfield<0> p;
+        Bitfield<11, 9> avl; //available to software?
+        Bitfield<8> g;  //global
+        Bitfield<7> ps; //page attribute table / page size?
+        Bitfield<6> d; //dirty
+        Bitfield<5> a; //accessed
+        Bitfield<4> pcd; //page cache disabled
+        Bitfield<3> pwt; //page write through
+        Bitfield<2> u; // user/supervisor
+        Bitfield<1> w; //read/write
+        Bitfield<0> p; //present
     EndBitUnion(PageTableEntry)
+
+/**~ PT Entry ~                                                 Present ──────┐
+                                                            Read/Write ──────┐|
+                                                      User/Supervisor ──────┐||
+                                                  Page Write Through ──────┐|||
+                                               Page Cache Disabled ──────┐ ||||
+                                                         Accessed ──────┐| ||||
+┌─── NX                                                    Dirty ──────┐|| ||||
+|┌───┬─ Memory Protection Key              Page Attribute Table ──────┐||| ||||
+||   |┌──────┬─── Ignored                               Global ─────┐ |||| ||||
+||   ||      | ┌─── Reserved                          Ignored ───┬─┐| |||| ||||
+||   ||      | |┌──────────────────────────────────────────────┐ | || |||| ||||
+||   ||      | ||            4KB Page Physical Address         | | || |||| ||||
+||   ||      | ||                                              | | || |||| ||||
+XXXX XXXX XXXX 0XXX XXXX XXXX XXXX XXXX XXXX XXXX XXXX XXXX XXXX XXXX XXXX XXXX
+       56        48        40        32        24        16         8         0
+https://zolutal.github.io/understanding-paging/ **/
 
     template <int first, int last>
     class LongModePTE

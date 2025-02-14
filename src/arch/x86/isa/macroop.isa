@@ -155,6 +155,9 @@ let {{
         def okapi_reset(self):
             self.okapi_reset = True
 
+        def pkruOp(self):
+            self.pkruOp = True
+
         def is_syscall(self):
                     self.is_syscall = True
 
@@ -171,6 +174,7 @@ let {{
                 "control_direct" : self.control_direct,
                 "control_indirect" : self.control_indirect,
                 "okapi_reset" : self.okapi_reset,
+                "pkruOp" : self.pkruOp,
                 "is_syscall" : self.is_syscall
             }
             self.declared = False
@@ -193,6 +197,7 @@ let {{
             self.control_direct = False
             self.control_indirect = False
             self.okapi_reset = False
+            self.pkruOp = False
             self.is_syscall = False
 
         def getAllocator(self, env):
@@ -225,6 +230,9 @@ let {{
 
                 if self.okapi_reset:
                     flags.append("IsOkapiReset")
+
+                if self.pkruOp:
+                    flags.append("IsPkruOp")
 
                 if self.is_syscall:
                    flags.append("IsSyscall")

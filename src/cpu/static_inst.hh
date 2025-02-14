@@ -202,6 +202,7 @@ class StaticInst : public RefCounted, public StaticInstFlags
     //@}
 
     bool isOkapiReset() const { return flags[IsOkapiReset]; }
+    bool isPkruOp() const { return flags[IsPkruOp]; }
     bool isOkapiLoadInstruction() const {
         return flags[IsOkapiLoadInstruction]; }
     bool isLFence() const { return flags[IsLFence]; }

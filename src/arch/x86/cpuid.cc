@@ -46,6 +46,12 @@ namespace X86ISA {
         MonitorMwait,
         ThermalPowerMgmt,
         ExtendedFeatures,
+        Undefined8,
+        DirectCacheAccessInformation,
+        ArchitecturalPerformanceMonitoring,
+        ExtendedTopologyEnumeration,
+        UndefinedC,
+        ProcessorExtendedState,
         NumStandardCpuidFuncs
     };
 
@@ -169,12 +175,65 @@ namespace X86ISA {
                 }
                 break;
               case FamilyModelStepping:
-                result = CpuidResult(0x00020f51, 0x00000805,
-                                     0xefdbfbff, 0x00000209);
+                  /*if (bits(tc->readMiscRegNoEffect(misc_reg::Cr4), 18)) {
+                      result = CpuidResult(0x00020f51, 0x00000805,
+                                           0xefdbfbff, 0x0C000209);
+                  } else {*/
+                      //RCX = 0x04000209 for XSAVE enable
+                      result = CpuidResult(0x00020f51,
+                                           0x00000805,
+                                           0xefdbfbff,
+                                           0x00000209);
+                  //}
+                    // RCX
+                    //31   27   23   19   15   11   7    3
+                    //0000 0000 0000 0000 0000 0010 0000 1001
+                    //     ||
+                    //     |XSAVE
+                    //     OSXSAVE
                 break;
               case ExtendedFeatures:
-                result = CpuidResult(0x00000000, 0x01800000,
-                                     0x00000000, 0x00000000);
+                if (bits(tc->readMiscRegNoEffect(misc_reg::Cr4),
+                         22)) {
+                    result = CpuidResult(0x00000000,
+                                         0x01800000,//RAX = 0x00004000
+                                         0x00000000,
+                                         0x00000018);//0x00000018
+                } else {
+
+                    result = CpuidResult(0x00000000,
+                                         0x01800000, //RAX = 0x00004000
+                                         0x00000000,
+                                         0x00000008);//0x00000018
+                }
+
+                std::cout << "CPUID for extended features "
+                             "in function " << funcNum << std::endl;
+                break;
+              case ProcessorExtendedState:
+                  std::cout << "Check XSTATE Stuff" << std::endl;
+                  switch (index) {
+
+                      case 0:
+                          if (bits(tc->readMiscRegNoEffect(misc_reg::Cr4),
+                                   18)) {
+                              //RAX = x87 state; SSE state and PKRU state
+                              // 40 bytes as dummy
+                              result = CpuidResult(0x00000103, 0x00000040,
+                                                   0x00000000, 0x00000040);
+                          }
+                          break;
+                      case 1:
+                          //No opt and compact
+                          result = CpuidResult(0x00000000, 0x00000000,
+                                               0x00000000, 0x00000000);
+                          break;
+                      default:
+                          warn("x86 cpuid family 0x0000: "
+                               "unimplemented function %u",
+                               funcNum);
+                          return false;
+                  }
                 break;
               default:
                 warn("x86 cpuid family 0x0000: unimplemented function %u",

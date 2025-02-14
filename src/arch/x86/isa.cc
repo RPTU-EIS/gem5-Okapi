@@ -272,6 +272,12 @@ ISA::setMiscRegNoEffect(RegIndex idx, RegVal val)
         if (m5Reg.submode != SixtyFourBitMode)
             reg_width = 32;
         break;
+      case misc_reg::PKRU:
+          if (val == 0x55555554) {
+              //Current Workaround because XSTORE is not working yet
+              replaceBits(val, 2,2,0);
+          }
+        break;
       default:
         break;
     }

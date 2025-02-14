@@ -95,8 +95,8 @@
                 }
                 0x2: decode MODRM_MOD {
                     0x3: decode MODRM_RM {
-                        0x0: xgetbv();
-                        0x1: xsetbv();
+                        0x0: Inst::XGETBV();
+                        0x1: Inst::XSETBV();
                     }
                     default: decode MODE_SUBMODE {
                         0x0: Cpl0Inst::LGDT(M);
@@ -137,6 +137,10 @@
                     0x3: decode MODRM_RM {
                         0x0: BasicOperate::SERIALIZE({{/*Nothing*/}},
                                                          IsSerializeAfter);
+
+                        0x6: Inst::RDPKRU();
+
+                        0x7: Inst::WRPKRU();
                         }
                     }
                 0x6: Inst::LMSW(Ew);

@@ -81,4 +81,39 @@ def macroop SMSW_P {
     rdip t7, dataSize=asz
     st t1, seg, riprel, disp, dataSize=2
 };
+
+
+
+#IF (ECX = 0)
+#    THEN
+#        EAX := PKRU;
+#        EDX := 0;
+#    ELSE #GP(0);
+#FI;
+
+def macroop RDPKRU
+{
+    .pkruOp
+    rdpkru rax
+    xor rdx, rdx, rdx
+};
+
+def macroop WRPKRU
+{
+    .pkruOp
+    .serialize_before
+    wrpkru rax
+    .serialize_after
+};
+
+def macroop XGETBV
+{
+    xgetbv rax
+};
+
+def macroop XSETBV
+{
+    xsetbv rax
+};
+
 """
