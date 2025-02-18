@@ -122,7 +122,6 @@ enum : RegIndex
     Cr6,
     Cr7,
     Cr8,
-    XCr0,
     Cr9,
     Cr10,
     Cr11,
@@ -131,6 +130,7 @@ enum : RegIndex
     Cr14,
     Cr15,
 
+    XCr0,
     // Debug registers
     DrBase = CrBase + NumCRegs,
     Dr0 = DrBase,
