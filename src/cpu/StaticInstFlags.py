@@ -88,4 +88,9 @@ class StaticInstFlags(Enum):
         "IsHtmStart",  # Starts a HTM transaction
         "IsHtmStop",  # Stops (commits) a HTM transaction
         "IsHtmCancel",  # Explicitely aborts a HTM transaction
+        "IsOkapiReset",  # FNOP is re-used to reset Okapi bits
+        "IsOkapiLoadInstruction",  # Load instruction does not set the safe-access-bit
+        "IsPkruOp",  # Inst is MPK relevant
+        "IsLFence",  # Inst is x86 LFence
+        "IsMFence",  # Inst is x86 MFence
     ]

@@ -241,6 +241,13 @@ struct ExtMachInst
     //The size of the displacement
     uint8_t dispSize;
 
+    /**
+     * Philipp Schmitz 07.05.2024
+     * Add prefix to EMI
+     */
+    //OkapiLoad
+    uint8_t okapi_load;
+
     //Mode information
     OperatingModeAndCPL mode;
 };

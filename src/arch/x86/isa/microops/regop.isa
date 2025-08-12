@@ -1377,7 +1377,8 @@ let {{
                     {
                         CR4 cr4 = newVal;
                         // PAE can't be disabled in long mode.
-                        if (bits(newVal, 63, 11) ||
+                        // Dont allow writes to bits > 22 (cr4.pke)
+                        if (bits(newVal, 63, 23) ||
                                 (machInst.mode.mode == LongMode && !cr4.pae))
                             fault = std::make_shared<GeneralProtection>(0);
                     }
@@ -1615,6 +1616,51 @@ let {{
         code = '''
             DestReg = TscOp;
         '''
+
+    class Rdpkru(RdRegOp):
+        code = '''
+
+
+            if (Rcx == 0) {
+                DestReg = PkruOp;
+            } else {
+                fault = std::make_shared<GenericISA::M5PanicFault>(
+                        "Segment not present.\\n");
+            }
+        '''
+
+    class Wrpkru(RdRegOp):
+        code = '''
+            if (Rcx == 0 && Rdx == 0) {
+
+                //PkruOp = Rax & mask(4294967291);
+                PkruOp = Rax;
+            } else {
+                fault = std::make_shared<GenericISA::M5PanicFault>(
+                        "Segment not present.\\n");
+            }
+        '''
+
+    class Xgetbv(RdRegOp):
+            code = '''
+
+                Rax = XCr0Op;
+                std::cout << std::dec << curTick();
+                 std::cout << " Xgetbv ";
+                 std::cout << std::hex << Rax << std::dec << std::endl;
+
+            '''
+
+    class Xsetbv(RdRegOp):
+            code = '''
+
+                XCr0Op = Rax;
+                std::cout << std::dec << curTick();
+                std::cout << " Xgetbv ";
+                std::cout << std::hex << Rax << std::dec << std::endl;
+
+
+            '''
 
     class Rdm5reg(RdRegOp):
         code = '''

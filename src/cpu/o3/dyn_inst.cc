@@ -74,6 +74,7 @@ DynInst::DynInst(const Arrays &arrays, const StaticInstPtr &static_inst,
     ++cpu->instcount;
 
     if (cpu->instcount > 1500) {
+        cpu->dumpInsts();
 #ifdef GEM5_DEBUG
         cpu->dumpInsts();
         dumpSNList();

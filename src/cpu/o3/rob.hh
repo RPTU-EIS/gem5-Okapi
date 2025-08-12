@@ -41,6 +41,9 @@
 #ifndef __CPU_O3_ROB_HH__
 #define __CPU_O3_ROB_HH__
 
+#include <optional>
+#include <queue>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -50,6 +53,7 @@
 #include "cpu/inst_seq.hh"
 #include "cpu/o3/dyn_inst_ptr.hh"
 #include "cpu/o3/limits.hh"
+#include "cpu/o3/regfile.hh"
 #include "cpu/reg_class.hh"
 #include "enums/SMTQueuePolicy.hh"
 
@@ -94,7 +98,7 @@ class ROB
      *  @param _cpu   The cpu object pointer.
      *  @param params The cpu params including several ROB-specific parameters.
      */
-    ROB(CPU *_cpu, const BaseO3CPUParams &params);
+    ROB(CPU *_cpu, PhysRegFile* _regfile, const BaseO3CPUParams &params);
 
     std::string name() const;
 
@@ -152,6 +156,54 @@ class ROB
      *  ROB.
      */
     void retireHead(ThreadID tid);
+
+    /** Calculates the shadows caused by speculative
+     * instructions and marks loads as unsafe. */
+    std::vector<DynInstPtr> updateShadowedInsts(ThreadID tid);
+
+    struct Shadow
+    {
+        enum class Type
+        {
+            C, D, E, M, V2
+        } type;
+
+        std::string toString() const {
+            switch (type) {
+                case Type::C: return "C";
+                case Type::D: return "D";
+                case Type::E: return "E";
+                case Type::M: return "M";
+                case Type::V2: return "V2";
+            }
+            return {};
+        }
+    };
+
+    //std::deque<Addr> block_PCs;
+
+    /** Returns the shadow the instruction casts */
+    std::optional<Shadow> instCastsShadow(const DynInstPtr& inst,
+                                          bool v2 = false);
+
+    /** Returns the v2 shadow the instruction casts */
+    std::optional<Shadow> instCastsV2Shadow(DynInstPtr inst);
+
+    /** Returns true if the instruction is shadowed */
+    bool instIsShadowed(DynInstPtr inst, ThreadID tid, bool v2 = false);
+
+    /** Returns true if the instruction
+     * is a possible Spectre v2 vulnerability */
+    bool instIsV2Vulnerability(DynInstPtr inst, ThreadID tid);
+
+    /** Sets OkapiResetSuccessor flag
+     * if there is an older fnop/Okapi reset instruction */
+    void olderOkapiReset(DynInstPtr inst, ThreadID tid);
+
+
+        /** Taints the destination registers of inst with yRoT */
+    void taintDestinations(DynInstPtr inst, InstSeqNum yRoT);
+
 
     /** Is the oldest instruction across all threads ready. */
 //    bool isHeadReady();
@@ -266,12 +318,19 @@ class ROB
      */
     size_t countInsts(ThreadID tid);
 
+    /*** [Schmitz, STT] taint/untaint logic run every cycle ***/
+    // compute the taint from the head of ROB all the way until the end of ROB
+    void compute_taint(ThreadID tid);
+
   private:
     /** Reset the ROB state */
     void resetState();
 
     /** Pointer to the CPU. */
     CPU *cpu;
+
+    /** Pointer to the register file. */
+    PhysRegFile* regFile;
 
     /** Active Threads in CPU */
     std::list<ThreadID> *activeThreads;
@@ -302,6 +361,10 @@ class ROB
      *  in the ROB*/
     InstIt head;
 
+    bool mfence = false;
+    bool lfence_en = false;
+    int lfence_cnt = 0;
+
   private:
     /** Iterator used for walking through the list of instructions when
      *  squashing.  Used so that there is persistent state between cycles;
@@ -311,6 +374,8 @@ class ROB
      *  This will always be set to cpu->instList.end() if it is invalid.
      */
     InstIt squashIt[MaxThreads];
+
+
 
   public:
     /** Number of instructions in the ROB. */
@@ -338,6 +403,24 @@ class ROB
         statistics::Scalar reads;
         // The number of rob_writes
         statistics::Scalar writes;
+
+        statistics::Scalar loads;
+
+        statistics::Scalar okapiLoads;
+
+        statistics::Scalar okapiV2Loads;
+
+        statistics::Scalar okapiV1Loads;
+
+        statistics::Scalar okapiLoadsSquashedBeforeIssue;
+
+        statistics::Scalar taints;
+
+        statistics::Scalar branches_with_tainted_args;
+
+        statistics::Scalar syscalls;
+
+        statistics::Scalar okapiLoadInstructions;
     } stats;
 };
 

@@ -164,7 +164,11 @@ static void
 segvHandler(int sigtype)
 {
     STATIC_ERR("gem5 has encountered a segmentation fault!\n\n");
-
+    const EventQueue *const eq(curEventQueue());
+    if (eq) {
+        ccprintf(std::cerr, "Program aborted at tick %llu\n",
+                 eq->getCurTick());
+    }
     print_backtrace();
     raiseFatalSignal(SIGSEGV);
 }

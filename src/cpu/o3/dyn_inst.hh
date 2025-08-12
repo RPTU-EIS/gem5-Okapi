@@ -123,6 +123,8 @@ class DynInst : public ExecContext, public RefCounted
     /** The sequence number of the instruction. */
     InstSeqNum seqNum = 0;
 
+    bool squashable = false;
+
     /** The StaticInst used by this BaseDynInst. */
     const StaticInstPtr staticInst;
 
@@ -168,6 +170,21 @@ class DynInst : public ExecContext, public RefCounted
                                  /// instructions ahead of it
         SerializeAfter,          /// Needs to serialize instructions behind it
         SerializeHandled,        /// Serialization has been handled
+
+        //! Private Domain Philipp Schmitz 17.02.2023
+        InStallList,             /// Instruction is stalled because it's unsafe
+        UnsafeLoad,              /// Unsafe loads are not allowed to execute
+        OkapiLoad,
+        OkapiV2Load,
+        OkapiResetSuccessor,
+        NoLongerOkapi,
+        BlockPCBlocked,
+        V2Suspicious,
+        PTWReschedule,
+        hasBeenSentBefore,
+        Shadowed,         /// Instruction has been shadowed at some point
+        Unsafe,           /// Instruction is stalled because it's unsafe
+
         NumStatus
     };
 
@@ -175,6 +192,7 @@ class DynInst : public ExecContext, public RefCounted
     {
         NotAnInst,
         TranslationStarted,
+        TranslationBlocked,
         TranslationCompleted,
         PossibleLoadViolation,
         HitExternalSnoop,
@@ -187,6 +205,8 @@ class DynInst : public ExecContext, public RefCounted
         ReqMade,
         MemOpDone,
         HtmFromTransaction,
+        IsDestTainted,
+        IsArgsTainted,
         MaxFlags
     };
 
@@ -205,6 +225,8 @@ class DynInst : public ExecContext, public RefCounted
 
     /** PC state for this instruction. */
     std::unique_ptr<PCStateBase> pc;
+
+    Addr block_PC;
 
     /** Values to be written to the destination misc. registers. */
     std::vector<RegVal> _destMiscRegVal;
@@ -360,7 +382,7 @@ class DynInst : public ExecContext, public RefCounted
      * Saved memory request (needed when the DTB address translation is
      * delayed due to a hw page table walk).
      */
-    LSQ::LSQRequest *savedRequest;
+    LSQ::LSQRequest *savedRequest = nullptr;
 
     /////////////////////// Checker //////////////////////
     // Need a copy of main request pointer to verify on writes.
@@ -381,6 +403,13 @@ class DynInst : public ExecContext, public RefCounted
     bool notAnInst() const { return instFlags[NotAnInst]; }
     void setNotAnInst() { instFlags[NotAnInst] = true; }
 
+
+    /*** [Schmitz,STT] STT Flags setter and accessor ***/
+    bool isDestTainted() const { return instFlags[IsDestTainted]; }
+    void isDestTainted(bool f) { instFlags[IsDestTainted] = f; }
+
+    bool isArgsTainted() const { return instFlags[IsArgsTainted]; }
+    void isArgsTainted(bool f) { instFlags[IsArgsTainted] = f; }
 
     ////////////////////////////////////////////
     //
@@ -409,6 +438,10 @@ class DynInst : public ExecContext, public RefCounted
     /** True if the DTB address translation has started. */
     bool translationStarted() const { return instFlags[TranslationStarted]; }
     void translationStarted(bool f) { instFlags[TranslationStarted] = f; }
+
+    /** True if the DTB address translation has been blocked. */
+    bool translationBlocked() const { return instFlags[TranslationBlocked]; }
+    void translationBlocked(bool f) { instFlags[TranslationBlocked] = f; }
 
     /** True if the DTB address translation has completed. */
     bool
@@ -566,6 +599,14 @@ class DynInst : public ExecContext, public RefCounted
     {
         return staticInst->isSerializeAfter() || status[SerializeAfter];
     }
+    // [Schmitz,STT] The following are STT status
+    /// Instruction is an access instruction(root of taint)
+    bool isAccess() const { return staticInst->isLoad(); }
+    /// Instruction is a transmit instruction(has to be made invisible)
+    bool isTransmit() const { return staticInst->isLoad() ||
+                                staticInst->isCondCtrl(); }
+
+
     bool isSquashAfter() const { return staticInst->isSquashAfter(); }
     bool isFullMemBarrier()   const { return staticInst->isFullMemBarrier(); }
     bool isReadBarrier() const { return staticInst->isReadBarrier(); }
@@ -585,6 +626,12 @@ class DynInst : public ExecContext, public RefCounted
     bool isHtmCancel() const { return staticInst->isHtmCancel(); }
     bool isHtmCmd() const { return staticInst->isHtmCmd(); }
 
+    bool isOkapiReset() const { return staticInst->isOkapiReset(); }
+    bool isOkapiLoadInstruction() const {
+        return staticInst->isOkapiLoadInstruction(); }
+
+    bool isLFence() const { return staticInst->isLFence(); }
+    bool isMFence() const { return staticInst->isMFence(); }
     uint64_t
     getHtmTransactionUid() const override
     {
@@ -748,6 +795,68 @@ class DynInst : public ExecContext, public RefCounted
     /** Clears this instruction being able to issue. */
     void clearCanIssue() { status.reset(CanIssue); }
 
+
+    //!Private Domain Philipp Schmitz 17.02.2023
+    /** Adds instruction in List to be stalled*/
+    void addToStallList() { status.set(InStallList); }
+
+    void removeFromStallList() { status.reset(InStallList); }
+
+    bool isInStallList() const { return status[InStallList]; }
+
+    void setV2Suspicious() { status.set(V2Suspicious); }
+
+    void unsetV2Suspicious() { status.reset(V2Suspicious); }
+
+    bool isV2Suspicious() const { return status[V2Suspicious]; }
+
+    void setBlockPCBlocked() { status.set(BlockPCBlocked); }
+
+    void unsetBlockPCBlocked() { status.reset(BlockPCBlocked); }
+
+    bool isBlockPCBlocked() const { return status[BlockPCBlocked]; }
+
+    void setPTWReschedule() { status.set(PTWReschedule); }
+
+    void unsetPTWReschedule() { status.reset(PTWReschedule); }
+
+    bool isPTWReschedule() const { return status[PTWReschedule]; }
+
+    void setUnsafe() { status.set(Unsafe); }
+
+    void unsetUnsafe() { status.reset(Unsafe); }
+
+    bool isUnsafe() const { return status[Unsafe]; }
+
+
+    void setUnsafeLoad() { status.set(UnsafeLoad); }
+    void clearUnsafeLoad() { status.reset(UnsafeLoad); }
+    bool isUnsafeLoad() { return status[UnsafeLoad]; }
+
+
+    void setOkapiV2Load() { status.set(OkapiV2Load); }
+    void clearOkapiV2Load() { status.reset(OkapiV2Load); }
+    bool isOkapiV2Load() { return status[OkapiV2Load]; }
+
+    void setOkapiLoad() { status.set(OkapiLoad); }
+    bool isOkapiLoad() { return status[OkapiLoad]; }
+
+    void setHasBeenSentBefore() { status.set(hasBeenSentBefore); }
+    bool isHasBeenSentBefore() { return status[hasBeenSentBefore]; }
+
+    void setOkapiResetSuccessor() { status.set(OkapiResetSuccessor); }
+    bool isOkapiResetSuccessor() { return status[OkapiResetSuccessor]; }
+    void clearOkapiResetSuccessor() { status.reset(OkapiResetSuccessor); }
+
+    void setNoLongerOkapiLoad() { status.set(NoLongerOkapi); }
+    bool isNoLongerOkapiLoad() { return status[NoLongerOkapi]; }
+
+    void setShadowed() { status.set(Shadowed); }
+    void clearShadowed() { status.reset(Shadowed); }
+    bool isShadowed() { return status[Shadowed]; }
+
+    //!End Private Domain Philipp Schmitz 17.02.2023
+
     /** Sets this instruction as issued from the IQ. */
     void setIssued() { status.set(Issued); }
 
@@ -880,6 +989,20 @@ class DynInst : public ExecContext, public RefCounted
         status.set(PinnedRegsSquashDone);
     }
 
+    /** [Philipp Schmitz] Okapi v2 Block PC */
+
+    Addr
+    getBlockPC() const
+    {
+        return block_PC;
+    }
+
+    void
+    setBlockPC(Addr block)
+    {
+        block_PC = block;
+    }
+
     /** Read the PC state of this instruction. */
     const PCStateBase &
     pcState() const override
@@ -932,6 +1055,8 @@ class DynInst : public ExecContext, public RefCounted
     bool hasRequest() const { return instFlags[ReqMade]; }
     /** Assert this instruction has generated a memory request. */
     void setRequest() { instFlags[ReqMade] = true; }
+
+    void unsetRequest() { instFlags[ReqMade] = false; }
 
     /** Returns iterator to this instruction in the list of all insts. */
     ListIt &getInstListIt() { return instListIt; }
@@ -992,6 +1117,8 @@ class DynInst : public ExecContext, public RefCounted
     int32_t renameTick = -1;  // instruction enters rename phase
     int32_t dispatchTick = -1;
     int32_t issueTick = -1;
+    int32_t unsafeTick = -1;  // instruction is unsafe
+    int32_t safeTick = -1;  // instruction is unsafe
     int32_t completeTick = -1;
     int32_t commitTick = -1;
     int32_t storeTick = -1;
@@ -1007,6 +1134,12 @@ class DynInst : public ExecContext, public RefCounted
     RegVal
     readMiscReg(int misc_reg) override
     {
+        /** If time stamp counter in x86 is read
+         * call debug function for timing array
+         */
+        if (misc_reg == 26) {
+            return cpu->readMiscReg(misc_reg, threadNumber, this);
+        }
         return cpu->readMiscReg(misc_reg, threadNumber);
     }
 

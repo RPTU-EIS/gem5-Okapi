@@ -270,7 +270,33 @@ LSQUnit::LSQUnitStats::LSQUnitStats(statistics::Group *parent)
                "Number of times an access to memory failed due to the cache "
                "being blocked"),
       ADD_STAT(loadToUse, "Distribution of cycle latency between the "
-                "first time a load is issued and its completion")
+                "first time a load is issued and its completion"),
+      ADD_STAT(okapiHits, statistics::units::Count::get(),
+               "Number of okapi loads that succeed"),
+      ADD_STAT(okapiResetBlocks, statistics::units::Count::get(),
+               "Number of okapi loads that are blocked by okapiResets"),
+      ADD_STAT(okapiLoadInstructionUnsafe, statistics::units::Count::get(),
+               "Number of OkapiLoad instructions that are blocked"),
+      ADD_STAT(okapiLoadInstructionSafe, statistics::units::Count::get(),
+               "Number of OkapiLoad instructions that are never blocked"),
+      ADD_STAT(okapiLoadInstructionReplay, statistics::units::Count::get(),
+               "Number of OkapiLoad insts that re-issued non-speculatively"),
+      ADD_STAT(okapiV2Blocks, statistics::units::Count::get(),
+               "Number of okapi loads that are blocked to prevent v2 gadgets"),
+      ADD_STAT(okapiMisses, statistics::units::Count::get(),
+               "Number of okapi loads that need to be rescheduled"),
+      ADD_STAT(okapiLoadsInitiated, statistics::units::Count::get(),
+               "Number of okapi loads that need to be rescheduled"),
+      ADD_STAT(privRequests, statistics::units::Count::get(),
+               "Number of privileged requests to dtlb"),
+      ADD_STAT(okapiLoadsRescheduled, statistics::units::Count::get(),
+               "Number of former okapi Loads going to TLB"),
+      ADD_STAT(safeLoadInitiated, statistics::units::Count::get(),
+               "Safe Loads going to TLB"),
+      ADD_STAT(executedLoads, statistics::units::Count::get(),
+               "loads sent to be executed")
+
+
 {
     loadToUse
         .init(0, 299, 10)
@@ -596,8 +622,138 @@ LSQUnit::executeLoad(const DynInstPtr &inst)
             inst->pcState(), inst->seqNum);
 
     assert(!inst->isSquashed());
+    stats.executedLoads++;
+    if (!inst->isUnsafeLoad()) {
+        if (!inst->isHasBeenSentBefore()) {
+            stats.safeLoadInitiated++;
+            if (inst->isOkapiLoadInstruction())
+                stats.okapiLoadInstructionSafe++;
+        }
+        if (inst->isOkapiLoadInstruction() && inst->isHasBeenSentBefore())
+            stats.okapiLoadInstructionReplay++;
 
-    load_fault = inst->initiateAcc();
+        if (inst->isOkapiLoad()) stats.okapiLoadsRescheduled++;
+        DPRINTF(LSQUnit, "Safe load PC %s, [sn:%lli]\n",
+                inst->pcState(), inst->seqNum);
+        inst->removeFromStallList();
+        inst->setHasBeenSentBefore();
+        load_fault = inst->initiateAcc();
+    } else {
+
+        if (cpu->getSpeculativeLoadPolicy() ==
+           SpeculativeLoadPolicy::EagerDelay ||
+           cpu->getSpeculativeLoadPolicy() ==
+           SpeculativeLoadPolicy::NaiveDelay) {
+            //Do not initiate the load it needs to be delayed
+            DPRINTF(LSQUnit, "Delaying load PC %s, [sn:%lli]"
+                             " because it is speculative\n",
+                             inst->pcState(), inst->seqNum);
+            inst->addToStallList();
+            load_fault = NoFault;
+        } else if (cpu->getSpeculativeLoadPolicy() ==
+          SpeculativeLoadPolicy::Okapi) {
+
+            //! First Case: OkapiLoadInstruction or behind OkapiReset
+            //! Instruction does not go to the TLB speculatively
+            //! Instruction does not set the safe access bit
+            if (inst->isOkapiLoadInstruction() ||
+                    inst->isOkapiResetSuccessor()) {
+                //Do not initiate the load it needs to be delayed
+
+                inst->addToStallList();
+                load_fault = NoFault;
+
+                //! stats and diagnosis
+                if (inst->isOkapiResetSuccessor()) {
+                    stats.okapiResetBlocks++;
+                    assert(cpu->getOkapiReset());
+                    DPRINTF(LSQUnit, "Delaying load PC %s, [sn:%lli]"
+                                     " because it is behind "
+                                     "OkapiReset Instruction\n",
+                            inst->pcState(), inst->seqNum);
+                }  else {
+                    stats.okapiLoadInstructionUnsafe++;
+                    DPRINTF(LSQUnit, "Delaying load PC %s, [sn:%lli]"
+                                     " because it is a speculative "
+                                     "OkapiLoad Instruction\n",
+                            inst->pcState(), inst->seqNum);
+                }
+            } else if (!inst->isOkapiV2Load()) {
+                //! Okapi v2 only send loads to TLB if it does not cross a
+                //! page boundary speculatively or if it is a safe load
+                //! to reduce the attack surface
+
+                //load is not behind a suspicious
+                // instruction so there is no danger for a V2 gadget
+                inst->removeFromStallList();
+                load_fault = inst->initiateAcc();
+                inst->unsetBlockPCBlocked();
+
+            } else {
+
+                if (cpu->getROBHeadInst()->getBlockPC()
+                    == inst->getBlockPC()) {
+                    inst->removeFromStallList();
+                    inst->unsetBlockPCBlocked();
+                    inst->clearOkapiV2Load();
+                    DPRINTF(LSQUnit, "Current block PC %s "
+                                     "does match any "
+                                     "of the following:\n",
+                            inst->getBlockPC());
+
+                    load_fault = inst->initiateAcc();
+                } else if (inst->translationCompleted()) {
+                    //! PC matched with head the frist time
+                    //! and it hit but it
+                    //! got blocked by the cache but it is
+                    //! translated so it should be safe to issue
+                    std::cout << "Why does this happen" << std::endl;
+                    assert(0);
+
+                    inst->removeFromStallList();
+                    inst->unsetBlockPCBlocked();
+                    load_fault = inst->initiateAcc();
+                } else {
+                DPRINTF(LSQUnit, "Current block PC %s does "
+                                 "not match any of "
+                                 "the following:\n",
+                        inst->getBlockPC());
+
+                //Do not initiate the load it needs to be delayed
+                //because the PC at ROB head does not match
+                DPRINTF(LSQUnit, "Delaying load PC %s, [sn:%lli] "
+                                 "because PC does not match with"
+                                 " set\n",
+                        inst->pcState(), inst->seqNum);
+                inst->addToStallList();
+                inst->setBlockPCBlocked();
+                load_fault = NoFault;
+                }
+
+            }
+
+
+            /** separate stats to have only first issue*/
+            if (!inst->isHasBeenSentBefore()) {
+                if (inst->isOkapiLoad()) stats.okapiLoadsInitiated++;
+                if (inst->isOkapiLoad()
+                    && inst->translationCompleted()) {
+                    stats.okapiHits++;
+                } else if (inst->isOkapiLoad()
+                    && inst->isBlockPCBlocked()) {
+                    stats.okapiV2Blocks++;
+                } else if (inst->isOkapiLoad()
+                    && !inst->translationStarted()) {
+                    stats.okapiMisses++;
+                }
+            }
+            inst->setHasBeenSentBefore();
+
+        } else {
+            //! No other mitigation currently has
+            assert(0);
+        }
+    }
 
     if (load_fault == NoFault && !inst->readMemAccPredicate()) {
         assert(inst->readPredicate());
@@ -608,8 +764,18 @@ LSQUnit::executeLoad(const DynInstPtr &inst)
         return NoFault;
     }
 
-    if (inst->isTranslationDelayed() && load_fault == NoFault)
+    if (inst->isTranslationDelayed() && load_fault == NoFault) {
+        DPRINTF(LSQUnit, "Translation delayed load PC %s, [sn:%lli]\n",
+                inst->pcState(), inst->seqNum);
         return load_fault;
+    }
+
+    if (inst->isInStallList() && load_fault == NoFault) {
+        DPRINTF(LSQUnit, "Translation stalled load PC %s, [sn:%lli]\n",
+                inst->pcState(), inst->seqNum);
+        return load_fault;
+    }
+
 
     if (load_fault != NoFault && inst->translationCompleted() &&
             inst->savedRequest->isPartialFault()
@@ -781,6 +947,7 @@ LSQUnit::writebackBlockedStore()
     assert(isStoreBlocked);
     storeWBIt->request()->sendPacketToCache();
     if (storeWBIt->request()->isSent()){
+        DPRINTF(LSQUnit, "812 blocked store post send\n");
         storePostSend();
     }
 }
@@ -907,6 +1074,7 @@ LSQUnit::writebackStores()
 
         /* If successful, do the post send */
         if (request->isSent()) {
+            DPRINTF(LSQUnit, "938 store post send\n");
             storePostSend();
         } else {
             DPRINTF(LSQUnit, "D-Cache became blocked when writing [sn:%lli], "
@@ -959,7 +1127,7 @@ LSQUnit::squash(const InstSeqNum &squashed_num)
         loadQueue.pop_back();
         ++stats.squashedLoads;
     }
-
+    DPRINTF(LSQUnit,"Done squashing Load Queue\n");
     // hardware transactional memory
     // scan load queue (from oldest to youngest) for most recent valid htmUid
     auto scan_it = loadQueue.begin();
@@ -1539,6 +1707,9 @@ LSQUnit::read(LSQRequest *request, ssize_t load_idx)
                     (stalled &&
                      load_inst->seqNum <
                      loadQueue[stallingLoadIdx].instruction()->seqNum)) {
+                    DPRINTF(LSQUnit, "Stalled set to true "
+                                     "for instruction [sn:%llu]\n",
+                                     store_it->instruction()->seqNum);
                     stalled = true;
                     stallingStoreIsn = store_it->instruction()->seqNum;
                     stallingLoadIdx = load_idx;

@@ -118,9 +118,14 @@ TLB::insert(Addr vpn, const TlbEntry &entry, uint64_t pcid)
     newEntry = freeList.front();
     freeList.pop_front();
 
+    stats.tlbEntries++;
+
     *newEntry = entry;
     newEntry->lruSeq = nextSeq();
     newEntry->vaddr = vpn;
+    //! [Philipp Schmitz] Okapi set domain bit if a new entry is inserted
+    newEntry->inDomain = 1;
+
     if (FullSystem) {
         newEntry->trieHandle =
         trie.insert(vpn, TlbEntryTrie::MaxBits-entry.logBytes, newEntry);
@@ -136,8 +141,55 @@ TlbEntry *
 TLB::lookup(Addr va, bool update_lru)
 {
     TlbEntry *entry = trie.lookup(va);
+    //! Okapi [Philipp Schmitz] 02.08.2023
+    //! Only update LRU if it is a secure lookup
+    if (entry && update_lru && entry->inDomain != 0) {
+        entry->lruSeq = nextSeq();
+        //TODO pass right value
+        entry->inDomain = 1;
+    }
+
+    return entry;
+}
+
+TlbEntry *
+TLB::lookupOkapiLoad(Addr va, bool update_lru)
+{
+    TlbEntry *entry = trie.lookup(va);
+    //! Okapi [Philipp Schmitz] 02.06.2024
+    //! Only update LRU if it is a secure lookup
+    if (entry && update_lru) {
+        entry->lruSeq = nextSeq();
+        //TODO pass right value
+        entry->inDomain = 0;
+    }
+    if (entry) entry->inDomain = 0;
+
+    return entry;
+}
+
+//! Okapi Philipp Schmitz 02.08.2023
+//! Only update LRU if it is a secure lookup
+//! Use this function if we store different
+//! domain IDs instead of binary decision
+TlbEntry *
+TLB::lookupDomain(Addr va, uint16_t domain, bool update_lru)
+{
+    DPRINTF(TLB, "lookup domain function\n");
+    TlbEntry *entry = trie.lookup(va);
+    if (entry) {
+        DPRINTF(TLB, "hit\n");
+        if (entry->inDomain != domain) {
+            DPRINTF(TLB, "not in domain\n");
+            return NULL;
+        }
+    }
+
+    //TODO pass domain identifier to do a real check and not check
+    //if it is in any domain or is this even necessary?
     if (entry && update_lru)
         entry->lruSeq = nextSeq();
+
     return entry;
 }
 
@@ -206,6 +258,14 @@ localMiscRegAccess(bool read, RegIndex regNum,
 
 } // anonymous namespace
 
+
+void
+TLB::setPrivSwitchEnable(bool enable) {
+    privSwitchEnable = enable;
+    std::cout << "Set privSwitchEnable to " << enable << std::endl;
+}
+
+
 Fault
 TLB::translateInt(bool read, RequestPtr req, ThreadContext *tc)
 {
@@ -266,6 +326,21 @@ TLB::translateInt(bool read, RequestPtr req, ThreadContext *tc)
     } else {
         panic("Access to unrecognized internal address space %#x.\n",
                 prefix);
+    }
+}
+
+//!Okapi Philipp Schmitz 02.08.2023
+void
+TLB::flushDomainBits()
+{
+    DPRINTF(TLB, "flushDomainBits()\n");
+    for (size_t i = 0; i < size; i++) {
+        if (tlb[i].trieHandle) {
+            if (tlb[i].inDomain == 1) {
+                stats.bitsReset++;
+            }
+            tlb[i].inDomain = 0;
+        }
     }
 }
 
@@ -334,6 +409,9 @@ TLB::translate(const RequestPtr &req,
     if (seg == segment_idx::Ms) {
         return translateInt(mode == BaseMMU::Read, req, tc);
     }
+
+    //!Request from OkapiLoadInstruction should never be sent speculatively
+    assert(!(req->getSpeculative() && req->getOkapiLoadInstruction()));
 
     Addr vaddr = req->getVaddr();
     DPRINTF(TLB, "Translating vaddr %#x.\n", vaddr);
@@ -416,7 +494,20 @@ TLB::translate(const RequestPtr &req,
                 pcid = 0x000;
 
             pageAlignedVaddr = concAddrPcid(pageAlignedVaddr, pcid);
-            TlbEntry *entry = lookup(pageAlignedVaddr);
+            //!Okapi Philipp Schmitz 02.08.2023
+            //! Do lookup with domain check in case of insecure lookup
+            TlbEntry *entry = nullptr;
+
+            if (req->getSpeculative()) {
+                //TODO check domain id
+                entry = lookupDomain(pageAlignedVaddr, 1);
+            } else if (req->getOkapiLoadInstruction()) {
+                //! OkapiLoadInstruction must not be issued speculatively
+                assert(!req->getSpeculative());
+                entry = lookupOkapiLoad(pageAlignedVaddr);
+            } else {
+                entry = lookup(pageAlignedVaddr);
+            }
 
             if (mode == BaseMMU::Read) {
                 stats.rdAccesses++;
@@ -424,48 +515,147 @@ TLB::translate(const RequestPtr &req,
                 stats.wrAccesses++;
             }
             if (!entry) {
-                DPRINTF(TLB, "Handling a TLB miss for "
-                        "address %#x at pc %#x.\n",
-                        vaddr, tc->pcState().instAddr());
-                if (mode == BaseMMU::Read) {
-                    stats.rdMisses++;
-                } else {
-                    stats.wrMisses++;
-                }
-                if (FullSystem) {
-                    Fault fault = walker->start(tc, translation, req, mode);
-                    if (timing || fault != NoFault) {
-                        // This gets ignored in atomic mode.
-                        delayedResponse = true;
-                        return fault;
-                    }
-                    entry = lookup(pageAlignedVaddr);
-                    assert(entry);
-                } else {
-                    Process *p = tc->getProcessPtr();
-                    const EmulationPageTable::Entry *pte =
-                        p->pTable->lookup(vaddr);
-                    if (!pte) {
-                        return std::make_shared<PageFault>(vaddr, true, mode,
-                                                           true, false);
+                //! Okapi Philipp Schmitz 02.08.2023
+                /**
+                 * No entry has been found
+                three possible cases:
+                 1) request is not squashable -> issue page table walk
+                 2) request is squashable + a hit in TLB but the page
+                 has not been accessed securely yet
+                 3) request is squashable + a miss in tlb
+                 * 2) and 3) can be treated the same
+                 * Maybe distinguish for statistics
+                 */
+
+                if (!req->getSpeculative()) {
+                    DPRINTF(TLB, "Handling a TLB miss for "
+                                 "address %#x at pc %#x.\n",
+                            vaddr, tc->pcState().instAddr());
+                    if (mode == BaseMMU::Read) {
+                        stats.rdMisses++;
                     } else {
-                        Addr alignedVaddr = p->pTable->pageAlign(vaddr);
-                        DPRINTF(TLB, "Mapping %#x to %#x\n", alignedVaddr,
-                                pte->paddr);
-                        entry = insert(alignedVaddr, TlbEntry(
-                                p->pTable->pid(), alignedVaddr, pte->paddr,
-                                pte->flags & EmulationPageTable::Uncacheable,
-                                pte->flags & EmulationPageTable::ReadOnly),
-                                pcid);
+                        stats.wrMisses++;
                     }
-                    DPRINTF(TLB, "Miss was serviced.\n");
+                    if (FullSystem) {
+                        req->_spec_miss = false;
+                        Fault fault = walker->start(tc, translation,
+                                                    req, mode);
+                        if (timing || fault != NoFault) {
+                            // This gets ignored in atomic mode.
+                            delayedResponse = true;
+                            DPRINTF(TLB, "Delay response for "
+                                         "address %#x at pc %#x.\n",
+                                    vaddr, tc->pcState().instAddr());
+                            return fault;
+                        }
+                        entry = lookup(pageAlignedVaddr);
+                        DPRINTF(TLB, "Lookup entry for missed "
+                                     "previously missed request"
+                                     "address %#x at pc %#x.\n",
+                                vaddr, tc->pcState().instAddr());
+                        assert(entry);
+                    } else {
+                        Process *p = tc->getProcessPtr();
+                        const EmulationPageTable::Entry *pte =
+                                p->pTable->lookup(vaddr);
+                        if (!pte) {
+                            return std::make_shared<PageFault>(vaddr,
+                                                               true, mode,
+                                                               true, false);
+                        } else {
+                            Addr alignedVaddr = p->pTable->pageAlign(vaddr);
+                            DPRINTF(TLB, "Mapping %#x to %#x\n", alignedVaddr,
+                                    pte->paddr);
+                            entry = insert(
+                                    alignedVaddr,
+                                    TlbEntry(p->pTable->pid(), alignedVaddr,
+                                             pte->paddr,
+                                             pte->flags &
+                                             EmulationPageTable::Uncacheable,
+                                             pte->flags &
+                                             EmulationPageTable::ReadOnly),
+                                             pcid);
+                        }
+                        DPRINTF(TLB, "Miss was serviced.\n");
+                    }
+                } else {
+                    //TODO distinguish 2) and 3) for stats
+                    if (mode == BaseMMU::Read) stats.specRdMisses++;
+                    req->_spec_miss = true;
+                    translation->markOkapiBlocked();
+                    delayedResponse = true;
+                    DPRINTF(TLB, "Delay response for "
+                                 "address %#x at pc %#x because the"
+                                 "safe access bit has not been set.\n",
+                            vaddr, tc->pcState().instAddr());
+                    return NoFault;
                 }
             }
 
             DPRINTF(TLB, "Entry found with paddr %#x, "
                     "doing protection checks.\n", entry->paddr);
+            req->_spec_miss = false;
+            delayedResponse = false;
             // Do paging protection checks.
             bool inUser = m5Reg.cpl == 3 && !(flags & CPL0FlagBit);
+            //only reset the bits if enabled
+            if (privSwitchEnable) {
+                if (user && !inUser) {
+                    user = false;
+                    stats.privChange++;
+                    flushDomainBits();
+                    DPRINTF(TLB, "privilege change from User to not User\n");
+                    //ticktickboom--;
+                } else if (!user && inUser) {
+                    stats.privChange++;
+                    flushDomainBits();
+                    user = true;
+                    DPRINTF(TLB, "privilege change from not User to User\n");
+                }
+            }
+            // Check if memory protection keys are enabled
+
+            if (cr4.pke) { //TODO maybe disable for debugging
+
+                PKRU pkru = tc->readMiscRegNoEffect(misc_reg::PKRU);
+                auto permy = bits(pkru, 2 * entry->memoryKey + 1,
+                                  2 * entry->memoryKey);
+
+
+                /** For a key i ∊ ⟦0; 15⟧ the bit 2i of
+                 * the PKRU block any data read or write
+                 * if set to 1 (it is called access disable
+                 * bit, or AD) and the bit 2i+1 disable
+                 * only write (called write disable bit, WD).
+                 * Thus, we can both read and write
+                 * if the two bits (WD, AD) are set to (0, 0),
+                 * only read with (1, 0) and have
+                 * no access with (0, 1) or (1, 1).
+
+                */
+                if (bits(permy, 0)) {
+                    std::cout << "Illegal Access to address ";
+                    std::cout << std::hex << vaddr;
+                    std::cout << " PKRU value is (-,1) " << std::hex << pkru;
+                    std::cout << std::dec << " with key ";
+                    std::cout << entry->memoryKey << std::endl;
+
+
+                    return std::make_shared<PageFault>(vaddr, true,
+                                                       mode, inUser,
+                                                       false);
+                } else if (bits(permy,1) && mode == BaseMMU::Write) {
+                    std::cout << "Illegal write to address ";
+                    std::cout << std::hex << vaddr;
+                    std::cout << " PKRU value is (1,0) " << std::hex << pkru;
+                    std::cout << std::dec << " with key ";
+                    std::cout << entry->memoryKey << std::endl;
+                    return std::make_shared<PageFault>(vaddr, true,
+                                                       mode, inUser,
+                                                       false);
+                }
+            }
+
             CR0 cr0 = tc->readMiscRegNoEffect(misc_reg::Cr0);
             bool badWrite = (!entry->writable && (inUser || cr0.wp));
             if ((inUser && !entry->user) ||
@@ -485,6 +675,15 @@ TLB::translate(const RequestPtr &req,
 
             Addr paddr = entry->paddr | (vaddr & mask(entry->logBytes));
             DPRINTF(TLB, "Translated %#x -> %#x.\n", vaddr, paddr);
+            DPRINTF(TLB, "Safe-access-bits was %s now",
+                    "set to true",
+                    entry->inDomain);
+            if (req->getOkapiLoadInstruction()) {
+                entry->inDomain = 0;
+            } else {
+                entry->inDomain = 1;
+            }
+
             req->setPaddr(paddr);
             if (entry->uncacheable)
                 req->setFlags(Request::UNCACHEABLE | Request::STRICT_ORDER);
@@ -575,8 +774,18 @@ TLB::TlbStats::TlbStats(statistics::Group *parent)
              "TLB accesses on write requests"),
     ADD_STAT(rdMisses, statistics::units::Count::get(),
              "TLB misses on read requests"),
+    ADD_STAT(tlbEntries, statistics::units::Count::get(),
+             "Number of used entries"),
+    ADD_STAT(specRdMisses, statistics::units::Count::get(),
+             "speculative TLB misses on read requests"),
     ADD_STAT(wrMisses, statistics::units::Count::get(),
-             "TLB misses on write requests")
+             "TLB misses on write requests"),
+    ADD_STAT(privChange, statistics::units::Count::get(),
+             "Number of privilege changes"),
+    ADD_STAT(bitsReset, statistics::units::Count::get(),
+             "Number of bits that have been reset"),
+    ADD_STAT(okapiLoads, statistics::units::Count::get(),
+             "Number requests coming from OkapiLoads")
 {
 }
 

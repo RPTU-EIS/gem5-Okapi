@@ -50,6 +50,7 @@
 #include "cpu/o3/inst_queue.hh"
 #include "cpu/o3/limits.hh"
 #include "cpu/o3/lsq.hh"
+#include "cpu/o3/rob.hh"
 #include "cpu/o3/scoreboard.hh"
 #include "cpu/timebuf.hh"
 #include "debug/IEW.hh"
@@ -155,6 +156,9 @@ class IEW
 
     /** Sets pointer to the scoreboard. */
     void setScoreboard(Scoreboard *sb_ptr);
+
+    /** Sets ROB pointer */
+    void setROB(ROB *rob_ptr);
 
     /** Perform sanity checks after a drain. */
     void drainSanityCheck() const;
@@ -274,6 +278,13 @@ class IEW
      */
     void writebackInsts();
 
+    /** [Schmitz,STT] wakeup untaint insts **/
+    /** after writebackInsts and try to wake untaint instrs **/
+    void wakeUntaintInsts();
+
+
+    void wakeOkapiReset();
+
     /** Checks if any of the stall conditions are currently true. */
     bool checkStall(ThreadID tid);
 
@@ -337,6 +348,9 @@ class IEW
 
     /** Scoreboard pointer. */
     Scoreboard* scoreboard;
+
+    /** ROB Pointer */
+    ROB* rob;
 
   private:
     /** CPU pointer. */
@@ -450,6 +464,10 @@ class IEW
         /** Stat for total number of mispredicted branches detected at
          *  execute. */
         statistics::Formula branchMispredicts;
+        /** Stat for total number of okapi resets. */
+        statistics::Scalar okapiResets;
+        /** Stat for total number of okapi resets. */
+        statistics::Scalar okapiResetsCEX;
 
         struct ExecutedInstStats : public statistics::Group
         {

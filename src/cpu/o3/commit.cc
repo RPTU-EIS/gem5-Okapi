@@ -44,6 +44,8 @@
 #include <algorithm>
 #include <set>
 #include <string>
+#include <debug/Misc.hh>
+#include <debug/O3CPUAll.hh>
 
 #include "base/compiler.hh"
 #include "base/loader/symtab.hh"
@@ -130,6 +132,9 @@ Commit::Commit(CPU *_cpu, const BaseO3CPUParams &params)
         htmStops[tid] = 0;
     }
     interrupt = NoFault;
+    if (cpu->getSpeculativeLoadPolicy() == SpeculativeLoadPolicy::NaiveDelay) {
+        rob_stuck_limit = 10000000000;
+    }
 }
 
 std::string Commit::name() const { return cpu->name() + ".commit"; }
@@ -165,7 +170,10 @@ Commit::CommitStats::CommitStats(CPU *cpu, Commit *commit)
       ADD_STAT(committedInstType, statistics::units::Count::get(),
                "Class of committed instruction"),
       ADD_STAT(commitEligibleSamples, statistics::units::Cycle::get(),
-               "number cycles where commit BW limit reached")
+               "number cycles where commit BW limit reached")//,
+    //ADD_STAT(robBlockPCs, statistics::units::Count::get(),
+    //         "Number of elements that have been put into the set")
+
 {
     using namespace statistics;
 
@@ -621,6 +629,10 @@ Commit::tick()
     while (threads != end) {
         ThreadID tid = *threads++;
 
+        //! [Schmitz, STT] compute new taints after completing the instructions
+        if (cpu->getSpeculativeLoadPolicy() == SpeculativeLoadPolicy::STT)
+            rob->compute_taint(tid);
+
         if (!rob->isEmpty(tid) && rob->readHeadInst(tid)->readyToCommit()) {
             // The ROB has more instructions it can commit. Its next status
             // will be active.
@@ -632,6 +644,7 @@ Commit::tick()
                     " ROB and ready to commit\n",
                     tid, inst->seqNum, inst->pcState());
 
+            rob_stuck = 0;
         } else if (!rob->isEmpty(tid)) {
             const DynInstPtr &inst = rob->readHeadInst(tid);
 
@@ -640,6 +653,14 @@ Commit::tick()
             DPRINTF(Commit,"[tid:%i] Can't commit, Instruction [sn:%llu] PC "
                     "%s is head of ROB and not ready\n",
                     tid, inst->seqNum, inst->pcState());
+            rob_stuck++;
+        }
+        if (rob_stuck >= 1000000) {
+            std::cout << "ROB did not progress for more than "
+                         "100000000 cycles! Abort simulation! "
+                         "Inst at head [sn:"
+                      << rob->readHeadInst(tid)->seqNum << std::endl;
+            assert(0);
         }
 
         DPRINTF(Commit, "[tid:%i] ROB has %d insts & %d free entries.\n",
@@ -1364,6 +1385,11 @@ Commit::updateComInstStats(const DynInstPtr &inst)
         if (inst->isLoad()) {
             cpu->commitStats[tid]->numLoadInsts++;
         }
+
+        if (inst->isOkapiLoad()) {
+            cpu->commitStats[tid]->numOkapiLoadInsts++;
+        }
+
 
         if (inst->isStore()) {
             cpu->commitStats[tid]->numStoreInsts++;

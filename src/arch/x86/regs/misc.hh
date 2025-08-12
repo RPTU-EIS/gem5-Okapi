@@ -130,6 +130,7 @@ enum : RegIndex
     Cr14,
     Cr15,
 
+    XCr0,
     // Debug registers
     DrBase = CrBase + NumCRegs,
     Dr0 = DrBase,
@@ -402,6 +403,8 @@ enum : RegIndex
 
     ApicBase,
 
+    PKRU, //Protection Key Register
+
     // "Fake" MSRs for internally implemented devices
     PciConfigAddress,
 
@@ -627,18 +630,24 @@ BitUnion64(CR3)
 EndBitUnion(CR3)
 
 BitUnion64(CR4)
+    Bitfield<22> pke;      // Enable Memory Protection Keys
     Bitfield<18> osxsave; // Enable XSAVE and Proc Extended States
     Bitfield<17> pcide; // PCID Enable
     Bitfield<16> fsgsbase; // Enable RDFSBASE, RDGSBASE, WRFSBASE,
                            // WRGSBASE instructions
+                           //
+   // 0110
+
     Bitfield<10> osxmmexcpt; // Operating System Unmasked
                              // Exception Support
     Bitfield<9> osfxsr; // Operating System FXSave/FSRSTOR Support
     Bitfield<8> pce; // Performance-Monitoring Counter Enable
+    // 0010 , 1010 , 0011, 1011
     Bitfield<7> pge; // Page-Global Enable
     Bitfield<6> mce; // Machine Check Enable
     Bitfield<5> pae; // Physical-Address Extension
     Bitfield<4> pse; // Page Size Extensions
+    // 0
     Bitfield<3> de; // Debugging Extensions
     Bitfield<2> tsd; // Time Stamp Disable
     Bitfield<1> pvi; // Protected-Mode Virtual Interrupts
@@ -648,6 +657,27 @@ EndBitUnion(CR4)
 BitUnion64(CR8)
     Bitfield<3, 0> tpr; // Task Priority Register
 EndBitUnion(CR8)
+
+BitUnion64(XCR0)
+        Bitfield<9> pkru; // XSAVE support for PKRU register
+// AVX-512 enabled and XSAVE support for upper ZMM registers
+        Bitfield<7> hi16_zmm;
+// AVX-512 enabled and XSAVE support for upper halves of lower ZMM registers
+        Bitfield<6> zmm_hi256;
+// AVX-512 enabled and XSAVE support for opmask registers k0-k7
+        Bitfield<5> opmask;
+// MPX enabled and XSAVE support for BNDCFGU and BNDSTATUS registers
+        Bitfield<4> bndcsr;
+        // 0
+// MPX enabled and XSAVE support for BND0-BND3 registers
+        Bitfield<3> bndreg;
+// VX enabled and XSAVE support for upper halves of YMM registers
+        Bitfield<2> avx;
+// XSAVE support for MXCSR and XMM registers
+        Bitfield<1> sse;
+// x87 FPU/MMX support (must be 1)
+        Bitfield<0> x87;
+EndBitUnion(XCR0)
 
 BitUnion64(DR6)
     Bitfield<0> b0;
@@ -1058,6 +1088,39 @@ BitUnion64(LocalApicBase)
     Bitfield<11> enable;
     Bitfield<8> bsp;
 EndBitUnion(LocalApicBase)
+
+/**
+ * Protection Key Register (User)
+ */
+BitUnion64(PKRU)
+        Bitfield<31,30> mpk15;
+        Bitfield<29,28> mpk14;
+        Bitfield<27,26> mpk13;
+        Bitfield<25,24> mpk12;
+        Bitfield<23,22> mpk11;
+        Bitfield<21,20> mpk10;
+        Bitfield<19,18> mpk9;
+        Bitfield<17,16> mpk8;
+        Bitfield<15,14> mpk7;
+        Bitfield<13,12> mpk6;
+        Bitfield<11,10> mpk5;
+        Bitfield<9,8> mpk4;
+        Bitfield<7,6> mpk3;
+        Bitfield<5,4> mpk2;
+        Bitfield<3,2> mpk1;
+        Bitfield<1,0> mpk0;
+EndBitUnion(PKRU)
+
+/** - Bit 2i, shown as “ADi” (access disable):
+ * if set, the processor prevents any data accesses
+ * to linear addresses
+        (user-mode or supervisor-mode, depending
+        on the register) with protection key i.
+    - Bit 2i+1, shown as “WDi” (write disable): if set,
+    the processor prevents write accesses to linear addresses
+        (user-mode or supervisor-mode, depending on the
+        register) with protection key i.
+*/
 
 } // namespace X86ISA
 } // namespace gem5

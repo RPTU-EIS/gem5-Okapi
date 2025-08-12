@@ -1,0 +1,1 @@
+How does default_config.cfg look like?

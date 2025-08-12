@@ -242,6 +242,21 @@ LSQ::executeLoad(const DynInstPtr &inst)
 }
 
 Fault
+LSQ::executeOkapiReset(const DynInstPtr &inst) {
+    ThreadID tid = inst->threadNumber;
+    //TODO build request to TLB that does it
+    //right now it executes at that tick
+    //could build a "real" request to
+    // the TLB but I think it should be doable like this
+    //since we execute at head and
+    // TLB should have some spare time
+    assert(cpu->getOkapiReset());
+    thread[tid].getMMUPtr()->resetOkapiBits();
+    return NoFault;
+}
+
+
+Fault
 LSQ::executeStore(const DynInstPtr &inst)
 {
     ThreadID tid = inst->threadNumber;
@@ -787,6 +802,8 @@ LSQ::pushRequest(const DynInstPtr& inst, bool isLoad, uint8_t *data,
     // This comming request can be either load, store or atomic.
     // Atomic request has a corresponding pointer to its atomic memory
     // operation
+    DPRINTF(LSQ,"Push request\n");
+
     [[maybe_unused]] bool isAtomic = !isLoad && amo_op;
 
     ThreadID tid = cpu->contextToThread(inst->contextId());
@@ -807,6 +824,8 @@ LSQ::pushRequest(const DynInstPtr& inst, bool isLoad, uint8_t *data,
 
     if (inst->translationStarted()) {
         request = inst->savedRequest;
+        DPRINTF(LSQ, "Saved request %lli \n",
+                inst->seqNum);
         assert(request);
     } else {
         if (htm_cmd || tlbi_cmd) {
@@ -829,11 +848,108 @@ LSQ::pushRequest(const DynInstPtr& inst, bool isLoad, uint8_t *data,
         // a strictly ordered load
         inst->getFault() = NoFault;
 
+        DPRINTF(LSQ, "Initiate translation of inst [sn:%lli] with mask %s\n",
+                inst->seqNum, inst->isUnsafeLoad());
+        //This is never true for eager delay
+        inst->squashable = inst->isUnsafeLoad();
+        if (cpu->getSpeculativeLoadPolicy() ==
+            SpeculativeLoadPolicy::EagerDelay) assert(!inst->squashable);
+
+
         request->initiateTranslation();
+    }
+
+
+    if (cpu->getSpeculativeLoadPolicy() == SpeculativeLoadPolicy::Okapi
+        && !request->isTranslationComplete() && inst->isOkapiLoad()
+        && !inst->isNoLongerOkapiLoad() && request->isOkapiBlocked()) {
+        //TODO clean this mess
+        inst->translationStarted(false);
+        inst->addToStallList();
+        DPRINTF(LSQ, "Delete stale request for Okapi Load [sn:%llu]\n",
+                inst->seqNum);
+        //For LSQ_UNIT
+        request->_port.loadQueue[inst->lqIdx].setRequest(nullptr);
+        //For LSQ itself?
+        request->resetInstruction();
+        request->release(LSQRequest::LSQEntryFreed);
+
+        //delete request;
+        //request->resetInstruction();
+        //delete request;
+        //request = nullptr;
+        //request->finish(0,nullptr,nullptr,BaseMMU::Read);
+        inst->savedRequest = nullptr;
+        inst->unsetRequest();
+        /*auto reqs = request->_reqs;
+        auto req = (*(reqs.begin()));
+        req->setSpeculative(inst->isUnsafeLoad());
+        DPRINTF(LSQ, "Okapi retry translation of saved request for inst"
+                "[sn:%lli] with mask %s with outstanding packages %lli "
+                "with spec miss %s with speculative %s is Okapi Load? %s\n",
+                inst->seqNum, inst->isUnsafeLoad(),
+                request->_numOutstandingPackets,
+                req->_spec_miss, req->getSpeculative(), inst->isOkapiLoad());
+        if (request->_numOutstandingPackets == 0 &&
+           inst->isOkapiLoad() && req->_spec_miss && !req->getSpeculative()) {
+            inst->setNoLongerOkapiLoad();
+            DPRINTF(LSQ, "translation can be completed now %lli \n",
+                    inst->seqNum);
+            DPRINTF(LSQ, "request speculative? %lli \n",
+                    req->getSpeculative());
+
+            //Try to delete the other request and create a new one
+            //request->_inst = nullptr;
+            request->resetInstruction();
+            delete request;
+            //request->resetInstruction();
+            //delete request;
+            //request = nullptr;
+            //request->finish(0,nullptr,nullptr,BaseMMU::Read);
+            inst->savedRequest = nullptr;
+            if (htm_cmd || tlbi_cmd) {
+                assert(addr == 0x0lu);
+                assert(size == 8);
+                DPRINTF(LSQ,"unsquashable direct request\n");
+                request = new UnsquashableDirectRequest(&thread[tid], i
+                                                        nst, flags);
+            } else if (needs_burst) {
+                DPRINTF(LSQ,"Split data request\n");
+                request = new SplitDataRequest(&thread[tid], inst,
+                                               isLoad, addr,
+                                               size, flags, data, res);
+            } else {
+                DPRINTF(LSQ,"Single data request\n");
+                request = new SingleDataRequest(&thread[tid],
+                                        inst, isLoad, addr,
+                                        size, flags, data,
+                                        res, std::move(amo_op));
+            }
+            assert(request);
+            request->_byteEnable = byte_enable;
+            inst->setRequest();
+            request->taskId(cpu->taskId());
+
+            // There might be fault from a previous
+            // execution attempt if this is
+            // a strictly ordered load
+            inst->getFault() = NoFault;
+            DPRINTF(LSQ, "Initiate translation of inst
+                    "[sn:%lli] with mask %s\n",
+                    inst->seqNum, inst->isUnsafeLoad());
+            //This is never true for eager delay
+            inst->squashable = inst->isUnsafeLoad();
+            if (cpu->getSpeculativeLoadPolicy() ==
+              SpeculativeLoadPolicy::EagerDelay) assert(!inst->squashable);
+            request->initiateTranslation();
+        }*/
+        /* This is the place were instructions get the effAddr. */
     }
 
     /* This is the place were instructions get the effAddr. */
     if (request->isTranslationComplete()) {
+        DPRINTF(LSQ, "Translation complete for "
+                     "Request [sn:%llu]\n", inst->seqNum);
         if (request->isMemAccessRequired()) {
             inst->effAddr = request->getVaddr();
             inst->effSize = size;
@@ -900,6 +1016,11 @@ LSQ::SingleDataRequest::finish(const Fault &fault, const RequestPtr &request,
 }
 
 void
+LSQ::LSQRequest::resetInstruction() {
+    _inst = nullptr;
+}
+
+void
 LSQ::SplitDataRequest::finish(const Fault &fault, const RequestPtr &req,
         gem5::ThreadContext* tc, BaseMMU::Mode mode)
 {
@@ -952,7 +1073,7 @@ LSQ::SingleDataRequest::initiateTranslation()
 {
     assert(_reqs.size() == 0);
 
-    addReq(_addr, _size, _byteEnable);
+    addReq(_addr, _size, _byteEnable, _inst->squashable);
 
     if (_reqs.size() > 0) {
         _reqs.back()->setReqInstSeqNum(_inst->seqNum);
@@ -1004,7 +1125,8 @@ LSQ::SplitDataRequest::initiateTranslation()
     auto it_start = _byteEnable.begin();
     auto it_end = _byteEnable.begin() + (next_addr - base_addr);
     addReq(base_addr, next_addr - base_addr,
-                     std::vector<bool>(it_start, it_end));
+                     std::vector<bool>(it_start, it_end),
+                             _inst->squashable);
     size_so_far = next_addr - base_addr;
 
     /* We are block aligned now, reading whole blocks. */
@@ -1013,7 +1135,8 @@ LSQ::SplitDataRequest::initiateTranslation()
         auto it_start = _byteEnable.begin() + size_so_far;
         auto it_end = _byteEnable.begin() + size_so_far + cacheLineSize;
         addReq(base_addr, cacheLineSize,
-                         std::vector<bool>(it_start, it_end));
+                         std::vector<bool>(it_start, it_end),
+                                 _inst->squashable);
         size_so_far += cacheLineSize;
         base_addr += cacheLineSize;
     }
@@ -1023,7 +1146,8 @@ LSQ::SplitDataRequest::initiateTranslation()
         auto it_start = _byteEnable.begin() + size_so_far;
         auto it_end = _byteEnable.end();
         addReq(base_addr, _size - size_so_far,
-                         std::vector<bool>(it_start, it_end));
+               std::vector<bool>(it_start, it_end),
+                       _inst->squashable);
     }
 
     if (_reqs.size() > 0) {
@@ -1103,7 +1227,7 @@ bool LSQ::LSQRequest::squashed() const { return _inst->isSquashed(); }
 
 void
 LSQ::LSQRequest::addReq(Addr addr, unsigned size,
-           const std::vector<bool>& byte_enable)
+           const std::vector<bool>& byte_enable, bool is_squashable)
 {
     if (isAnyActiveElement(byte_enable.begin(), byte_enable.end())) {
         auto req = std::make_shared<Request>(
@@ -1111,7 +1235,11 @@ LSQ::LSQRequest::addReq(Addr addr, unsigned size,
                 _inst->pcState().instAddr(), _inst->contextId(),
                 std::move(_amo_op));
         req->setByteEnable(byte_enable);
-
+        //! Okapi Philipp Schmitz 02.08.2023
+        if (isLoad()) {
+            req->setSpeculative(is_squashable);
+            req->setOkapiLoadInstruction(_inst->isOkapiLoadInstruction());
+        }
         /* If the request is marked as NO_ACCESS, setup a local access */
         if (_flags.isSet(Request::NO_ACCESS)) {
             req->setLocalAccessor(
@@ -1135,8 +1263,9 @@ LSQ::LSQRequest::addReq(Addr addr, unsigned size,
 LSQ::LSQRequest::~LSQRequest()
 {
     assert(!isAnyOutstandingRequest());
-    _inst->savedRequest = nullptr;
-
+    if (_inst) {
+        _inst->savedRequest = nullptr;
+    }
     for (auto r: _packets)
         delete r;
 };
@@ -1153,6 +1282,10 @@ LSQ::LSQRequest::sendFragmentToTranslation(int i)
     numInTranslationFragments++;
     _port.getMMUPtr()->translateTiming(req(i), _inst->thread->getTC(),
             this, isLoad() ? BaseMMU::Read : BaseMMU::Write);
+    if (this->isOkapiBlocked()) {
+        numInTranslationFragments--;
+        //Translation is not in real progess
+    }
 }
 
 void
@@ -1450,7 +1583,7 @@ LSQ::UnsquashableDirectRequest::initiateTranslation()
 
     assert(_reqs.size() == 0);
 
-    addReq(_addr, _size, _byteEnable);
+    addReq(_addr, _size, _byteEnable, _inst->isUnsafeLoad());
 
     if (_reqs.size() > 0) {
         _reqs.back()->setReqInstSeqNum(_inst->seqNum);

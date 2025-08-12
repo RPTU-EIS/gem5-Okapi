@@ -174,6 +174,10 @@ IEW::IEWStats::IEWStats(CPU *cpu)
     ADD_STAT(branchMispredicts, statistics::units::Count::get(),
              "Number of branch mispredicts detected at execute",
              predictedTakenIncorrect + predictedNotTakenIncorrect),
+    ADD_STAT(okapiResets, statistics::units::Count::get(),
+               "Number of executed okapi resets"),
+   ADD_STAT(okapiResetsCEX, statistics::units::Count::get(),
+               "Number of executed okapi resets bc of CEX"),
     executedInstStats(cpu),
     ADD_STAT(instsToCommit, statistics::units::Count::get(),
              "Cumulative count of insts sent to commit"),
@@ -310,6 +314,12 @@ void
 IEW::setScoreboard(Scoreboard *sb_ptr)
 {
     scoreboard = sb_ptr;
+}
+
+void
+IEW::setROB(ROB *rob_ptr)
+{
+    rob = rob_ptr;
 }
 
 bool
@@ -1018,6 +1028,12 @@ IEW::dispatchInsts(ThreadID tid)
             cpu->executeStats[tid]->numNop++;
 
             add_to_iq = false;
+        } else if (inst->isOkapiReset()) {
+            DPRINTF(IEW, "[tid:%i] Issue: "
+                         "Resetting TLB bits instructions.\n"
+                         , tid);
+            assert(!inst->isExecuted());
+            add_to_iq = true;
         } else {
             assert(!inst->isExecuted());
             add_to_iq = true;
@@ -1043,7 +1059,8 @@ IEW::dispatchInsts(ThreadID tid)
         if (add_to_iq) {
             instQueue.insert(inst);
         }
-
+        DPRINTF(IEW, "[tid:%i] Issue: DBG "
+                     ".\n", tid);
         insts_to_dispatch.pop();
 
         toRename->iewInfo[tid].dispatched++;
@@ -1184,6 +1201,15 @@ IEW::executeInsts()
                     instQueue.deferMemInst(inst);
                     continue;
                 }
+                //!Private Domain Philipp Schmitz 13.05.2024
+                if (inst->isInStallList() && fault == NoFault) {
+                    //The load needs to be stalled -> defer instruction
+                    DPRINTF(IEW, "Execute: TES blocked translation, stalling "
+                                 "load.\n");
+                    instQueue.stallMemInst(inst);
+                    instQueue.printstallMemInst();
+                    continue;
+                }
 
                 if (inst->isDataPrefetch() || inst->isInstPrefetch()) {
                     inst->fault = NoFault;
@@ -1221,19 +1247,41 @@ IEW::executeInsts()
             }
 
         } else {
-            // If the instruction has already faulted, then skip executing it.
-            // Such case can happen when it faulted during ITLB translation.
-            // If we execute the instruction (even if it's a nop) the fault
-            // will be replaced and we will lose it.
-            if (inst->getFault() == NoFault) {
-                inst->execute();
-                if (!inst->readPredicate())
-                    inst->forwardOldRegs();
+
+            // Tell the LDSTQ to execute this instruction (if it is a load).
+            if (inst->isOkapiReset()) {
+                // AMOs are treated like store requests
+                if (cpu->getOkapiReset()) {
+                    ldstQueue.executeOkapiReset(inst);
+                    iewStats.okapiResets++;
+                }
+                DPRINTF(IEW, "Execute: Reset Okapi safe access bits.\n");
+                inst->setExecuted();
+
+                instToCommit(inst);
+            } else {
+
+                // If the instruction has already
+                // faulted, then skip executing it.
+                // Such case can happen when it
+                // faulted during ITLB translation.
+                // If we execute the instruction (even if it's a nop) the fault
+                // will be replaced and we will lose it.
+                if (inst->getFault() == NoFault) {
+                    inst->execute();
+                    if (!inst->readPredicate())
+                        inst->forwardOldRegs();
+                }
+                /*if (inst->isSyscall()) {
+                    fault = ldstQueue.executeOkapiReset(inst);
+                    iewStats.okapiResetsCEX++;
+                }*/
+
+
+                inst->setExecuted();
+
+                instToCommit(inst);
             }
-
-            inst->setExecuted();
-
-            instToCommit(inst);
         }
 
         updateExeInstStats(inst);
@@ -1423,9 +1471,15 @@ IEW::tick()
 
         writebackInsts();
 
+        /** [Schmitz, STT]*/
+        if (cpu->getSpeculativeLoadPolicy() == SpeculativeLoadPolicy::STT)
+            wakeUntaintInsts();
         // Have the instruction queue try to schedule any ready instructions.
         // (In actuality, this scheduling is for instructions that will
         // be executed next cycle.)
+        if (cpu->getSpeculativeLoadPolicy() == SpeculativeLoadPolicy::Okapi)
+            wakeOkapiReset();
+
         instQueue.scheduleReadyInsts();
 
         // Also should advance its own time buffers if the stage ran.
@@ -1467,6 +1521,34 @@ IEW::tick()
 
             updateLSQNextCycle = true;
             instQueue.commit(fromCommit->commitInfo[tid].doneSeqNum,tid);
+        }
+
+        if (cpu->getSpeculativeLoadPolicy() ==
+            SpeculativeLoadPolicy::EagerDelay ||
+            cpu->getSpeculativeLoadPolicy() == SpeculativeLoadPolicy::Okapi) {
+            DPRINTF(IEW,"Request updating the shadowed insts [tid:%i]\n",tid);
+            auto insts = rob->updateShadowedInsts(tid);
+            if (cpu->getSpeculativeLoadPolicy() ==
+                SpeculativeLoadPolicy::EagerDelay) {
+                for (auto inst : insts) {
+                    DPRINTF(IEW, "Replay unshadowed "
+                                 "inst PC %s [sn:%llu]\n"
+                                 , inst->pcState(), inst->seqNum);
+                    instQueue.replayMemInst(inst);
+                    inst->setAtCommit();
+                }
+            } else if (cpu->getSpeculativeLoadPolicy() ==
+                       SpeculativeLoadPolicy::Okapi) {
+                for (auto inst : insts) {
+                    //if (!inst->isIssued()) {
+                    DPRINTF(IEW, "Do not replay unshadowed inst "
+                                     "that had a ld/st forwarding error"
+                                     " %s [sn:%llu]\n"
+                                     , inst->pcState(), inst->seqNum);
+                    //    instQueue.replayMemInst(inst);
+                    //}
+                }
+            }
         }
 
         if (fromCommit->commitInfo[tid].nonSpecSeqNum != 0) {
@@ -1516,6 +1598,18 @@ IEW::tick()
         DPRINTF(Activity, "Activity this cycle.\n");
         cpu->activityThisCycle();
     }
+}
+
+void
+IEW::wakeUntaintInsts()
+{
+    instQueue.wakeUntaintInsts();
+}
+
+void
+IEW::wakeOkapiReset()
+{
+    instQueue.wakeOkapiReset();
 }
 
 void

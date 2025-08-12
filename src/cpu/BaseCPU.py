@@ -58,6 +58,18 @@ from m5.objects.ResetPort import ResetResponsePort
 default_tracer = ExeTracer()
 
 
+class SpeculativeLoadPolicy(ScopedEnum):
+    vals = ["None", "NaiveDelay", "EagerDelay", "STT", "Okapi"]
+
+
+class OkapiVariation(ScopedEnum):
+    vals = ["v1", "v2"]
+
+
+class ThreatModel(ScopedEnum):
+    vals = ["Futuristic", "Spectre", "Naive"]
+
+
 class BaseCPU(ClockedObject):
     type = "BaseCPU"
     abstract = True
@@ -120,6 +132,27 @@ class BaseCPU(ClockedObject):
     checker = Param.BaseCPU(NULL, "checker CPU")
 
     syscallRetryLatency = Param.Cycles(10000, "Cycles to wait until retry")
+
+    speculativeLoadPolicy = Param.SpeculativeLoadPolicy(
+        "None",
+        "Enable policies to prevent speculative side-channel vulnerabilities",
+    )
+
+    okapiVariation = Param.OkapiVariation("v2", "different Okapi variations")
+
+    okapiReset = Param.Bool(
+        False,
+        "enable OkapiReset via fnop",
+    )
+
+    privSwitchReset = Param.Bool(
+        True,
+        "enable OkapiReset via Privilege Switch",
+    )
+
+    threatModel = Param.ThreatModel(
+        "Futuristic", "Whether to enable all shadows or only C-Shadows"
+    )
 
     do_checkpoint_insts = Param.Bool(
         True, "enable checkpoint pseudo instructions"

@@ -205,6 +205,14 @@ InstructionQueue::IQStats::IQStats(CPU *cpu, const unsigned &total_width)
              "removed from graph"),
     ADD_STAT(squashedNonSpecRemoved, statistics::units::Count::get(),
              "Number of squashed non-spec instructions that were removed"),
+    ADD_STAT(okapiLoadSquash, statistics::units::Count::get(),
+             "squashed Okapi load"),
+    ADD_STAT(okapiLoadReschedule, statistics::units::Count::get(),
+             "rescheduled Okapi load"),
+    ADD_STAT(okapiLoadInstructionReschedule, statistics::units::Count::get(),
+             "rescheduled OkapiLoad instruction"),
+    ADD_STAT(okapiLoadRescheduleV2, statistics::units::Count::get(),
+             "number of rescheduled Okapi loads that have been blocked by V2"),
     ADD_STAT(numIssuedDist, statistics::units::Count::get(),
              "Number of insts issued each cycle"),
     ADD_STAT(statFuBusy, statistics::units::Count::get(),
@@ -424,6 +432,7 @@ InstructionQueue::resetState()
     nonSpecInsts.clear();
     listOrder.clear();
     deferredMemInsts.clear();
+    stalledMemInsts.clear();
     blockedMemInsts.clear();
     retryMemInsts.clear();
     wbOutstanding = 0;
@@ -578,25 +587,30 @@ InstructionQueue::insert(const DynInstPtr &new_inst)
     assert(freeEntries != 0);
 
     instList[new_inst->threadNumber].push_back(new_inst);
-
+    DPRINTF(IQ, "Adding instruction [sn:%llu] PC %s to the IQ.\n",
+            new_inst->seqNum, new_inst->pcState());
     --freeEntries;
 
     new_inst->setInIQ();
-
+    DPRINTF(IQ, "Adding instruction [sn:%llu] PC %s to the IQ.\n",
+            new_inst->seqNum, new_inst->pcState());
     // Look through its source registers (physical regs), and mark any
     // dependencies.
     addToDependents(new_inst);
-
+    DPRINTF(IQ, "Adding instruction [sn:%llu] PC %s to the IQ.\n",
+            new_inst->seqNum, new_inst->pcState());
     // Have this instruction set itself as the producer of its destination
     // register(s).
     addToProducers(new_inst);
-
+    DPRINTF(IQ, "Adding instruction [sn:%llu] PC %s to the IQ.\n",
+            new_inst->seqNum, new_inst->pcState());
     if (new_inst->isMemRef()) {
         memDepUnit[new_inst->threadNumber].insert(new_inst);
     } else {
         addIfReady(new_inst);
     }
-
+    DPRINTF(IQ, "Adding instruction [sn:%llu] PC %s to the IQ.\n",
+            new_inst->seqNum, new_inst->pcState());
     ++iqStats.instsAdded;
 
     count[new_inst->threadNumber]++;
@@ -758,6 +772,12 @@ InstructionQueue::scheduleReadyInsts()
 
     DynInstPtr mem_inst;
     while ((mem_inst = getDeferredMemInstToExecute())) {
+        DPRINTF(IQ, "Found deferred Mem instruction\n");
+        addReadyMemInst(mem_inst);
+    }
+
+    while ((mem_inst = getStalledMemInstToExecute())) {
+        DPRINTF(IQ, "Found stalled Mem instruction\n");
         addReadyMemInst(mem_inst);
     }
 
@@ -1063,6 +1083,64 @@ InstructionQueue::wakeDependents(const DynInstPtr &completed_inst)
     return dependents;
 }
 
+/*** [Schmitz,STT] ***/
+void
+InstructionQueue::wakeUntaintInsts()
+{
+    assert(cpu->getSpeculativeLoadPolicy() == SpeculativeLoadPolicy::STT);
+
+    auto threads = activeThreads->begin();
+    auto end     = activeThreads->end();
+
+    DPRINTF(IQ, "wakeUntaintInsts begin.\n");
+    while (threads != end) {
+        ThreadID tid = *threads++;
+        for (auto it = stalledTaintedInstList[tid].begin();
+            it != stalledTaintedInstList[tid].end(); ) {
+            DynInstPtr inst = *it;
+            if (inst->isSquashed()) {
+                inst->removeFromStallList();
+                it = stalledTaintedInstList[tid].erase(it);
+            }
+            else if (inst->readyToIssue() && !inst->isArgsTainted()) {
+                inst->removeFromStallList();
+                addIfReady(inst);
+                it = stalledTaintedInstList[tid].erase(it);
+            }
+            else {
+                it++;
+            }
+        }
+    }
+    DPRINTF(IQ, "wakeUntaintInsts done.\n");
+}
+
+void InstructionQueue::wakeOkapiReset()
+{
+    DPRINTF(IQ, "wakeOkapiReset begin.\n");
+    for (const auto& tid: *activeThreads) {
+        for (auto it = stalledOkapiResetList[tid].begin();
+            it != stalledOkapiResetList[tid].end(); ) {
+            assert(cpu->getOkapiReset());
+            DynInstPtr inst = *it;
+            if (inst->isSquashed()) {
+                inst->removeFromStallList();
+                it = stalledOkapiResetList[tid].erase(it);
+            } else if (inst->seqNum == cpu->getROBHeadInst()->seqNum) {
+                inst->removeFromStallList();
+                DPRINTF(IQ, "OkapiReset inst [sn:%llu]"
+                            "at head -> put ready.\n",
+                            inst->seqNum);
+                addIfReady(inst);
+                it = stalledOkapiResetList[tid].erase(it);
+            } else {
+                it++;
+            }
+        }
+    }
+    DPRINTF(IQ, "wakeOkapiReset done.\n");
+}
+
 void
 InstructionQueue::addReadyMemInst(const DynInstPtr &ready_inst)
 {
@@ -1111,6 +1189,20 @@ InstructionQueue::deferMemInst(const DynInstPtr &deferred_inst)
 }
 
 void
+InstructionQueue::stallMemInst(const DynInstPtr &stalled_inst)
+{
+    stalledMemInsts.push_back(stalled_inst);
+}
+
+void
+InstructionQueue::printstallMemInst() {
+    for (const auto& it: stalledMemInsts) {
+        DPRINTF(IQ, "Memory inst [sn:%llu] PC %s is blocked"
+                    "reissued later\n", it->seqNum,
+                it->pcState());
+    }
+}
+void
 InstructionQueue::blockMemInst(const DynInstPtr &blocked_inst)
 {
     blocked_inst->clearIssued();
@@ -1139,6 +1231,83 @@ InstructionQueue::getDeferredMemInstToExecute()
         if ((*it)->translationCompleted() || (*it)->isSquashed()) {
             DynInstPtr mem_inst = std::move(*it);
             deferredMemInsts.erase(it);
+            return mem_inst;
+        }
+    }
+    return nullptr;
+}
+
+/** stalledMemInsts contains TES mitigation blocked loads*/
+DynInstPtr
+InstructionQueue::getStalledMemInstToExecute() {
+    for (const auto& it: stalledMemInsts) {
+        DPRINTF(IQ, "stalled inst [sn:%llu] PC %s is blocked "
+                    "reissued later\n", it->seqNum,
+                it->pcState());
+    }
+    DPRINTF(IQ, "stalled insts to execute\n");
+    for (auto it = stalledMemInsts.begin();
+         it != stalledMemInsts.end();
+         ++it) {
+        DPRINTF(IQ, "[sn:%llu] in stalled Mem Insts "
+                    "buffer, unsafe? %s, translation started? %s\n"
+        , (*it)->seqNum, (*it)->isUnsafeLoad(),
+                (*it)->translationStarted());
+
+        assert(!(*it)->translationStarted());
+
+        //! Philipp Schmitz Okapi 02.08.2023
+
+        //! Remove squashed insts from list
+        if ((*it)->isSquashed()) {
+
+            DPRINTF(IQ, "Remove [sn:%llu] from "
+                        "stalledMemInsts due to squash\n"
+            , (*it)->seqNum);
+            if ((*it)->isOkapiLoad()) {
+                iqStats.okapiLoadSquash++;
+            }
+            DynInstPtr mem_inst = std::move(*it);
+            stalledMemInsts.erase(it);
+            return mem_inst;
+
+          //! Okapi blocked load is no longer speculative
+          //! Either miss in TLB or blocked due to
+          //! being an OkapiLoad Instruction
+        } else if (!(*it)->isUnsafeLoad() &&
+                  ((*it)->isOkapiLoad() || (*it)->isOkapiLoadInstruction())) {
+            DPRINTF(IQ, "[sn:%llu] is no longer unsafe-> re-issue\n",
+                    (*it)->seqNum);
+
+            if ((*it)->isOkapiLoad()) iqStats.okapiLoadReschedule++;
+            if ((*it)->isOkapiLoadInstruction())
+                iqStats.okapiLoadInstructionReschedule++;
+
+            DynInstPtr mem_inst = std::move(*it);
+            stalledMemInsts.erase(it);
+            return mem_inst;
+          //! Okapi blocked load is no longer suspicious
+        } else if (cpu->getOkapiVariation() == OkapiVariation::v2 &&
+                   !(*it)->isOkapiV2Load() && (*it)->isBlockPCBlocked()) {
+
+                DPRINTF(IQ, "[sn:%llu] is no longer v2 suspicious "
+                            "\n"
+                , (*it)->seqNum);
+                DynInstPtr mem_inst = std::move(*it);
+                mem_inst->unsetBlockPCBlocked();
+                stalledMemInsts.erase(it);
+                iqStats.okapiLoadRescheduleV2++;
+                return mem_inst;
+        } else if (!(*it)->isUnsafeLoad() && !(*it)->translationStarted() &&
+                 (cpu->getSpeculativeLoadPolicy() ==
+                  SpeculativeLoadPolicy::NaiveDelay ||
+                  cpu->getSpeculativeLoadPolicy() ==
+                  SpeculativeLoadPolicy::EagerDelay)) {
+            DPRINTF(IQ, "[sn:%llu] is no longer unsafe "
+                        "under naive or eager delay-> re-issue\n",
+                    (*it)->seqNum);
+            DynInstPtr mem_inst = std::move(*it);
+            stalledMemInsts.erase(it);
             return mem_inst;
         }
     }
@@ -1412,41 +1581,93 @@ InstructionQueue::addToProducers(const DynInstPtr &new_inst)
     }
 }
 
+/**[Schmitz, STT] adds inst to the ready queue**/
+void
+InstructionQueue::addReady(const DynInstPtr &inst)
+{
+    //Add the instruction to the proper ready list.
+    if (inst->isMemRef()) {
+
+        DPRINTF(IQ, "Checking if memory instruction can issue.\n");
+
+        // Message to the mem dependence unit that this instruction has
+        // its registers ready.
+        memDepUnit[inst->threadNumber].regsReady(inst);
+
+        return;
+    }
+
+    OpClass op_class = inst->opClass();
+
+    DPRINTF(IQ, "Instruction is ready to issue, putting it onto "
+                "the ready list, PC %s opclass:%i [sn:%llu].\n",
+            inst->pcState(), op_class, inst->seqNum);
+
+    readyInsts[op_class].push(inst);
+
+    // Will need to reorder the list if either a queue is not on the list,
+    // or it has an older instruction than last time.
+    if (!queueOnList[op_class]) {
+        addToOrderList(op_class);
+    } else if (readyInsts[op_class].top()->seqNum <
+               (*readyIt[op_class]).oldestInst) {
+        listOrder.erase(readyIt[op_class]);
+        addToOrderList(op_class);
+    }
+}
+
+
+
 void
 InstructionQueue::addIfReady(const DynInstPtr &inst)
 {
     // If the instruction now has all of its source registers
     // available, then add it to the list of ready instructions.
-    if (inst->readyToIssue()) {
+    /**[Schmitz, STT] only add untainted transmitters to the inst list**/
+    DPRINTF(IQ, "Add if ready\n");
+    if (cpu->getSpeculativeLoadPolicy() != SpeculativeLoadPolicy::STT) {
+        //normal execution
+        if (cpu->getSpeculativeLoadPolicy()
+            == SpeculativeLoadPolicy::Okapi &&
+            cpu->getOkapiReset()) {
+            if (inst->isOkapiReset() && cpu->getROBCnt() == 0) {
+                DPRINTF(IQ, "ROB does not have a "
+                            "head so there is an issue\n");
+                inst->setSquashed();
+            } else if (inst->isOkapiReset() && (inst->seqNum
+                        != cpu->getROBHeadInst()->seqNum) &&
+                       cpu->getOkapiReset()) {
+                DPRINTF(IQ, "Add if not at head\n");
+                inst->addToStallList();
+                stalledOkapiResetList[inst->threadNumber].push_back(inst);
+                DPRINTF(IQ, "Encountered Okapi Reset "
+                            "instruction that is not at "
+                            "head, putting it onto "
+                            "the stall list, PC %s, [sn:%llu].\n",
+                        inst->pcState(), inst->seqNum);
 
-        //Add the instruction to the proper ready list.
-        if (inst->isMemRef()) {
-
-            DPRINTF(IQ, "Checking if memory instruction can issue.\n");
-
-            // Message to the mem dependence unit that this instruction has
-            // its registers ready.
-            memDepUnit[inst->threadNumber].regsReady(inst);
-
-            return;
+            } else {
+                DPRINTF(IQ, "At head\n");
+                if (inst->readyToIssue()) addReady(inst);
+            }
+        } else {
+            if (inst->readyToIssue()) addReady(inst);
         }
 
-        OpClass op_class = inst->opClass();
-
-        DPRINTF(IQ, "Instruction is ready to issue, putting it onto "
-                "the ready list, PC %s opclass:%i [sn:%llu].\n",
-                inst->pcState(), op_class, inst->seqNum);
-
-        readyInsts[op_class].push(inst);
-
-        // Will need to reorder the list if either a queue is not on the list,
-        // or it has an older instruction than last time.
-        if (!queueOnList[op_class]) {
-            addToOrderList(op_class);
-        } else if (readyInsts[op_class].top()->seqNum  <
-                   (*readyIt[op_class]).oldestInst) {
-            listOrder.erase(readyIt[op_class]);
-            addToOrderList(op_class);
+    } else {// protectionEnabled && cpu->STT
+        assert (cpu->getSpeculativeLoadPolicy() == SpeculativeLoadPolicy::STT);
+        //check which insts are considered transmitters loads are transmitters
+        if (inst->readyToIssue() &&
+        (!inst->isTransmit() || !inst->isArgsTainted())) {
+            addReady(inst);
+        } else if (inst->readyToIssue() && inst->isArgsTainted()) {
+            // [Schmitz, STT]: if transmitter is ready
+            // but tainted, we put it in stallList
+            if (!inst->isInStallList()) {
+                inst->addToStallList();
+                stalledTaintedInstList[inst->threadNumber].push_back(inst);
+                //iqIOStats.instsStalledBeforeSetReady++;
+            }
         }
     }
 }

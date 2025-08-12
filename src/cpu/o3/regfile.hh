@@ -72,35 +72,53 @@ class PhysRegFile
                               PhysIds::iterator>;
   private:
     /** Integer register file. */
+public:
     RegFile intRegFile;
+private:
     std::vector<PhysRegId> intRegIds;
+    std::vector<bool> intRegTaints;
+    std::vector<InstSeqNum> intRegYRoTs;
 
     /** Floating point register file. */
     RegFile floatRegFile;
     std::vector<PhysRegId> floatRegIds;
+    std::vector<bool> floatRegTaints;
+    std::vector<InstSeqNum> floatRegYRoTs;
 
     /** Vector register file. */
     RegFile vectorRegFile;
     std::vector<PhysRegId> vecRegIds;
+    std::vector<bool> vectorRegTaints;
+    std::vector<InstSeqNum> vectorRegYRoTs;
 
     /** Vector element register file. */
     RegFile vectorElemRegFile;
     std::vector<PhysRegId> vecElemIds;
+    std::vector<bool> vecElemRegTaints;
+    std::vector<InstSeqNum> vecElemRegYRoTs;
 
     /** Predicate register file. */
     RegFile vecPredRegFile;
     std::vector<PhysRegId> vecPredRegIds;
+    std::vector<bool> vecPredTaints;
+    std::vector<InstSeqNum> vecPredRegYRoTs;
 
     /** Matrix register file. */
     RegFile matRegFile;
     std::vector<PhysRegId> matRegIds;
+    std::vector<bool> matRegTaints;
+    std::vector<InstSeqNum> matRegYRoTs;
 
     /** Condition-code register file. */
     RegFile ccRegFile;
     std::vector<PhysRegId> ccRegIds;
+    std::vector<bool> ccRegTaints;
+    std::vector<InstSeqNum> ccRegYRoTs;
 
     /** Misc Reg Ids */
     std::vector<PhysRegId> miscRegIds;
+    std::vector<bool> miscRegTaints;
+    std::vector<InstSeqNum> miscRegYRoTs;
 
     /**
      * Number of physical general purpose registers
@@ -329,6 +347,326 @@ class PhysRegFile
             break;
           default:
             panic("Unrecognized register class type %d.", type);
+        }
+    }
+
+
+
+    bool
+    getTaint(PhysRegIdPtr phys_reg) const
+    {
+        const RegClassType type = phys_reg->classValue();
+        const RegIndex idx = phys_reg->index();
+        bool val;
+        switch (type) {
+            case IntRegClass:
+                val = intRegTaints.at(idx);
+                DPRINTF(IEW, "RegFile: Access to int "
+                             "register %i, has taint %#x\n",
+                        idx, val);
+                return val;
+            case FloatRegClass:
+                val = floatRegTaints.at(idx);
+                DPRINTF(IEW, "RegFile: Access to float "
+                             "register %i has taint %#x\n",
+                        idx, val);
+                return val;
+            case VecElemClass:
+                val = vecElemRegTaints.at(idx);
+                DPRINTF(IEW, "RegFile: Access to vector element "
+                             "register %i "
+                             "has taint %#x\n", idx, val);
+                return val;
+            case CCRegClass:
+                val = ccRegTaints.at(idx);
+                DPRINTF(IEW, "RegFile: Access to cc "
+                             "register %i has taint %#x\n",
+                        idx, val);
+                return val;
+            case VecPredRegClass:
+                val = vecPredTaints.at(idx);
+                DPRINTF(IEW, "RegFile: Access to VecPredRegClass "
+                             "register %i has taint %#x\n",
+                        idx, val);
+                return val;
+            case VecRegClass:
+                val = vectorRegTaints.at(idx);
+                DPRINTF(IEW, "RegFile: Access to VecRegClass "
+                             "register %i has taint %#x\n",
+                        idx, val);
+                return val;
+            case MiscRegClass:
+                val = miscRegTaints.at(idx);
+                DPRINTF(IEW, "RegFile: Access to Misc "
+                             "register %i has taint %#x\n",
+                        idx, val);
+                return val;
+            case MatRegClass:
+                val = matRegTaints.at(idx);
+                DPRINTF(IEW, "RegFile: Access to MatRegClass "
+                             "register %i has taint %#x\n",
+                        idx, val);
+                return val;
+            default:
+                DPRINTF(IEW,"Unsupported register class type %d.", type);
+                return false;
+        }
+    }
+
+    InstSeqNum
+    getYRoT(PhysRegIdPtr phys_reg) const
+    {
+        const RegClassType type = phys_reg->classValue();
+        const RegIndex idx = phys_reg->index();
+
+        InstSeqNum val;
+        switch (type) {
+            case IntRegClass:
+                val = intRegYRoTs.at(idx);
+                DPRINTF(IEW, "RegFile: Access to int "
+                             "register %i, has YRoT %#x\n",
+                        idx, val);
+                return val;
+            case FloatRegClass:
+                val = floatRegYRoTs.at(idx);
+                DPRINTF(IEW, "RegFile: Access to float "
+                             "register %i has YRoT %#x\n",
+                        idx, val);
+                return val;
+            case VecElemClass:
+                val = vecElemRegYRoTs.at(idx);
+                DPRINTF(IEW, "RegFile: Access to vector element"
+                             " register %i "
+                             "has YRoT %#x\n", idx, val);
+                return val;
+            case CCRegClass:
+                val = ccRegYRoTs.at(idx);
+                DPRINTF(IEW, "RegFile: Access to cc "
+                             "register %i has YRoT %#x\n",
+                        idx, val);
+                return val;
+            case VecPredRegClass:
+                val = vecPredRegYRoTs.at(idx);
+                DPRINTF(IEW, "RegFile: Access to VecPredRegClass "
+                             "register %i has YRoT %#x\n",
+                        idx, val);
+                return val;
+            case VecRegClass:
+                val = vectorRegYRoTs.at(idx);
+                DPRINTF(IEW, "RegFile: Access to VecRegClass "
+                             "register %i has YRoT %#x\n",
+                        idx, val);
+                return val;
+            case MiscRegClass:
+                val = miscRegYRoTs.at(idx);
+                DPRINTF(IEW, "RegFile: Access to VecRegClass "
+                             "register %i has YRoT %#x\n",
+                        idx, val);
+                return val;
+            case MatRegClass:
+                val = matRegYRoTs.at(idx);
+                DPRINTF(IEW, "RegFile: Access to MatRegClass "
+                             "register %i has YRoT %#x\n",
+                        idx, val);
+                return val;
+            default:
+                DPRINTF(IEW,"Unsupported register class type %d.", type);
+                return 0;
+        }
+    }
+
+    void
+    setYRoT(PhysRegIdPtr phys_reg, InstSeqNum yRoT)
+    {
+        const RegClassType type = phys_reg->classValue();
+        const RegIndex idx = phys_reg->index();
+
+        switch (type) {
+            case IntRegClass:
+                intRegYRoTs.at(idx) = yRoT;
+                DPRINTF(IEW, "RegFile: Set YRoT of int "
+                             "register %i, as %#x\n",
+                        idx, yRoT);
+                return;
+            case FloatRegClass:
+                floatRegYRoTs.at(idx) = yRoT;
+                DPRINTF(IEW, "RegFile: Set YRoT of float "
+                             "register %i as %#x\n",
+                        idx, yRoT);
+                return;
+            case VecElemClass:
+                vecElemRegYRoTs.at(idx) = yRoT;
+                DPRINTF(IEW, "RegFile: Set YRoT of vector element "
+                             "register %i "
+                             "as %#x\n", idx, yRoT);
+                return;
+            case CCRegClass:
+                ccRegYRoTs.at(idx) = yRoT;
+                DPRINTF(IEW, "RegFile: Set YRoT of cc "
+                             "register %i as %#x\n",
+                        idx, yRoT);
+                return;
+            case VecPredRegClass:
+                vecPredRegYRoTs.at(idx) = yRoT;
+                DPRINTF(IEW, "RegFile: Access to VecPredRegClass "
+                             "register %i has YRoT %#x\n",
+                        idx, yRoT);
+                return;
+            case VecRegClass:
+                vectorRegYRoTs.at(idx) = yRoT;
+                DPRINTF(IEW, "RegFile: Access to VecRegClass "
+                             "register %i has YRoT %#x\n",
+                        idx, yRoT);
+                return;
+            case MiscRegClass:
+                miscRegYRoTs.at(idx) = yRoT;
+                DPRINTF(IEW, "RegFile: Access to VecRegClass "
+                             "register %i has YRoT %#x\n",
+                        idx, yRoT);
+                return;
+            case MatRegClass:
+                matRegYRoTs.at(idx) = yRoT;
+                DPRINTF(IEW, "RegFile: Access to MatRegClass "
+                             "register %i has taint %#x\n",
+                        idx, yRoT);
+                return;
+            default:
+                DPRINTF(IEW,"Unsupported register class type %d.", type);
+                return;
+        }
+    }
+
+    void
+    setTaint(PhysRegIdPtr phys_reg, bool taint)
+    {
+        const RegClassType type = phys_reg->classValue();
+        const RegIndex idx = phys_reg->index();
+
+        switch (type) {
+            case IntRegClass:
+                intRegTaints.at(idx) = taint;
+                DPRINTF(IEW, "RegFile: Set taint of int "
+                             "register %i, as %#x\n",
+                        idx, taint);
+                return;
+            case FloatRegClass:
+                floatRegTaints.at(idx) = taint;
+                DPRINTF(IEW, "RegFile: Set taint of float "
+                             "register %i as %#x\n",
+                        idx, taint);
+                return;
+            case VecElemClass:
+                vecElemRegTaints.at(idx) = taint;
+                DPRINTF(IEW, "RegFile: Set taint of vector element "
+                             "register %i "
+                             "as %#x\n", idx, taint);
+                return;
+            case CCRegClass:
+                ccRegTaints.at(idx) = taint;
+                DPRINTF(IEW, "RegFile: Set taint of cc "
+                             "register %i as %#x\n",
+                        idx, taint);
+                return;
+            case VecPredRegClass:
+                vecPredTaints.at(idx) = taint;
+                DPRINTF(IEW, "RegFile: Access to VecPredRegClass "
+                             "register %i has taint %#x\n",
+                        idx, taint);
+                return;
+            case VecRegClass:
+                vectorRegTaints.at(idx) = taint;
+                DPRINTF(IEW, "RegFile: Access to VecRegClass "
+                             "register %i has taint %#x\n",
+                        idx, taint);
+                return;
+            case MiscRegClass:
+                miscRegTaints.at(idx) = taint;
+                DPRINTF(IEW, "RegFile: Access to VecRegClass "
+                             "register %i has taint %#x\n",
+                        idx, taint);
+                return;
+            case MatRegClass:
+                matRegTaints.at(idx) = taint;
+                DPRINTF(IEW, "RegFile: Access to MatRegClass "
+                             "register %i has taint %#x\n",
+                        idx, taint);
+                return;
+            default:
+                DPRINTF(IEW,"Unsupported register class type %d.", type);
+                return;
+        }
+    }
+
+    void
+    clearYRoTsAndTaints(const std::vector<InstSeqNum>& yRoTs)
+    {
+
+        //TODO optimize for runtime
+        for (const auto& yRoT: yRoTs) {
+            int i = 0;
+            for (const auto& iYRT: intRegYRoTs) {
+                if (iYRT == yRoT) {
+                    intRegYRoTs.at(i) = 0;
+                    intRegTaints.at(i) = false;
+                }
+                i++;
+            }
+            i = 0;
+            for (const auto& iYRT: floatRegYRoTs) {
+                if (iYRT == yRoT) {
+                    floatRegYRoTs.at(i) = 0;
+                    floatRegTaints.at(i) = false;
+                }
+                i++;
+            }
+            i = 0;
+            for (const auto& iYRT: vectorRegYRoTs) {
+                if (iYRT == yRoT) {
+                    vectorRegYRoTs.at(i) = 0;
+                    vectorRegTaints.at(i) = false;
+                }
+                i++;
+            }
+            i = 0;
+            for (const auto& iYRT: vecElemRegYRoTs) {
+                if (iYRT == yRoT) {
+                    vecElemRegYRoTs.at(i) = 0;
+                    vecElemRegTaints.at(i) = false;
+                }
+                i++;
+            }
+            i = 0;
+            for (const auto& iYRT: vecPredRegYRoTs) {
+                if (iYRT == yRoT) {
+                    vecPredRegYRoTs.at(i) = 0;
+                    vecPredTaints.at(i) = false;
+                }
+                i++;
+            }
+            i = 0;
+            for (const auto& iYRT: ccRegYRoTs) {
+                if (iYRT == yRoT) {
+                    ccRegYRoTs.at(i) = 0;
+                    ccRegTaints.at(i) = false;
+                }
+                i++;
+            }
+            i = 0;
+            for (const auto& iYRT: miscRegYRoTs) {
+                if (iYRT == yRoT) {
+                    miscRegYRoTs.at(i) = 0;
+                    miscRegTaints.at(i) = false;
+                }
+                i++;
+            }
+            i = 0;
+            for (const auto& iYRT: matRegYRoTs) {
+                if (iYRT == yRoT) {
+                    matRegYRoTs.at(i) = 0;
+                    matRegTaints.at(i) = false;
+                }
+                i++;
+            }
         }
     }
 };

@@ -101,6 +101,12 @@ class Request : public Extensible<Request>
     typedef uint8_t ArchFlagsType;
     typedef gem5::Flags<FlagsType> Flags;
 
+    //!Okapi Philipp Schmitz 02.08.2023
+    /**
+     * Is the request a speculative miss in the TLB?
+     */
+    bool _spec_miss = false;
+
     enum : FlagsType
     {
         /**
@@ -385,6 +391,24 @@ class Request : public Extensible<Request>
      */
     Addr _paddr = 0;
 
+    //!PrivateDomain Philipp Schmitz 16.02.2023
+    /**
+     * The domain identifier of the request
+     */
+    uint16_t _inDomain = 0;
+
+    //!PrivateDomain Philipp Schmitz 16.02.2023
+    /**
+     * Is instruction that issued the request speculative?
+     */
+    bool _speculative = false;
+
+    //!Okapi Philipp Schmitz 13.05.2024
+    /**
+     * Is instruction that issued the request an OkapiLoad instruction?
+     */
+    bool _okapi_load_instruction = false;
+
     /**
      * The size of the request. This field must be set when vaddr or
      * paddr is written via setVirt() or a phys basec constructor, so it is
@@ -485,7 +509,9 @@ class Request : public Extensible<Request>
      * These fields are adequate to perform a request.
      */
     Request(Addr paddr, unsigned size, Flags flags, RequestorID id) :
-        _paddr(paddr), _size(size), _requestorId(id), _time(curTick())
+        _paddr(paddr), _inDomain(0), _speculative(false),
+        _okapi_load_instruction(false),
+        _size(size), _requestorId(id), _time(curTick())
     {
         _flags.set(flags);
         privateFlags.set(VALID_PADDR|VALID_SIZE);
@@ -494,7 +520,9 @@ class Request : public Extensible<Request>
 
     Request(Addr vaddr, unsigned size, Flags flags,
             RequestorID id, Addr pc, ContextID cid,
-            AtomicOpFunctorPtr atomic_op=nullptr)
+            AtomicOpFunctorPtr atomic_op=nullptr):
+                _inDomain(0), _speculative(false),
+                _okapi_load_instruction(false)
     {
         setVirt(vaddr, size, flags, id, pc, std::move(atomic_op));
         setContext(cid);
@@ -503,7 +531,11 @@ class Request : public Extensible<Request>
 
     Request(const Request& other)
         : Extensible<Request>(other),
-          _paddr(other._paddr), _size(other._size),
+          _paddr(other._paddr),
+          _inDomain(other._inDomain),
+          _speculative(other._speculative),
+          _okapi_load_instruction(other._okapi_load_instruction),
+          _size(other._size),
           _byteEnable(other._byteEnable),
           _requestorId(other._requestorId),
           _flags(other._flags),
@@ -600,6 +632,38 @@ class Request : public Extensible<Request>
         privateFlags.set(VALID_PADDR);
     }
 
+    //!PrivateDomain Philipp Schmitz 16.02.2023
+    /**
+     * The domain identifier of the request
+     */
+    void
+    setDomain(uint16_t inDomain)
+    {
+        _inDomain = inDomain;
+    }
+
+    //!PrivateDomain Philipp Schmitz 16.02.2023
+    /**
+     * Set the instruction of the request
+     * @param inst
+     */
+    void
+    setSpeculative(bool spec)
+    {
+        _speculative = spec;
+    }
+
+    //!Okapi Philipp Schmitz 13.05.2024
+    /**
+     * Set the instruction of the request
+     * @param inst
+     */
+    void
+    setOkapiLoadInstruction(bool okapi_load_instruction)
+    {
+        _okapi_load_instruction = okapi_load_instruction;
+    }
+
     /**
      * Generate two requests as if this request had been split into two
      * pieces. The original request can't have been translated already.
@@ -640,6 +704,29 @@ class Request : public Extensible<Request>
         assert(hasPaddr());
         return _paddr;
     }
+
+    //!PrivateDomain Philipp Schmitz 16.02.2023
+    uint16_t
+    getInDomain() const
+    {
+        return _inDomain;
+    }
+    //!Okapi Philipp Schmitz 16.02.2023
+    bool
+    getSpeculative() const
+    {
+        return _speculative;
+
+    }
+
+    //!Okapi Philipp Schmitz 13.05.2024
+    bool
+    getOkapiLoadInstruction() const
+    {
+        return _okapi_load_instruction;
+
+    }
+
 
     /**
      * Accessor for instruction count.

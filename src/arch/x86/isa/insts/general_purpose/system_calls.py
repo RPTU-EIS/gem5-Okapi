@@ -36,6 +36,7 @@
 microcode = """
 def macroop SYSCALL_64
 {
+    .is_syscall
     # All 1s.
     limm t1, "(uint64_t)(-1)", dataSize=8
 
@@ -89,6 +90,7 @@ def macroop SYSCALL_64
 
 def macroop SYSCALL_COMPAT
 {
+    .is_syscall
     # All 1s.
     limm t1, "(uint64_t)(-1)", dataSize=8
 
@@ -178,6 +180,7 @@ def macroop SYSRET_TO_64
 
     # Set the RIP back.
     wrip rcx, t0, dataSize=8
+    .is_syscall
 };
 
 def macroop SYSRET_TO_COMPAT
@@ -212,6 +215,7 @@ def macroop SYSRET_TO_COMPAT
 
     # Set the RIP back.
     wrip rcx, t0, dataSize=8
+    .is_syscall
 };
 
 def macroop SYSRET_NON_64

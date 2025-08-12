@@ -1,0 +1,52 @@
+#!/bin/sh
+
+#SBATCH --partition=CPUQ
+#SBATCH --account=share-ie-idi
+#SBATCH --time=150:00:00
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --array=1-28
+#SBATCH --mem=18432
+#SBATCH --job-name="spec2017"
+#SBATCH --mail-user=amund.kvalsvik@ntnu.no
+#SBATCH --mail-type=ALL
+#SBATCH --output=slurm/%A_%a.slurm
+
+WORKDIR=/cluster/home/amundbk/gem5
+cd ${WORKDIR}
+
+name=$1
+tag=$2
+task=$3
+
+special="blank"
+
+if [ -z "$4" ]; then
+	echo "no special name"
+else
+	special=$4
+fi
+
+
+((index=$SLURM_ARRAY_TASK_ID - 1))
+((jobid=$SLURM_ARRAY_JOB_ID))
+
+echo "$jobid"
+
+if [ "$name" = "" ]; then
+	echo "NO NAME"
+	exit
+fi
+
+if [ $index -eq 0 ]; then
+	echo "IM HERE"
+else
+	sleep 20
+fi
+
+module load SCons/4.0.1-GCCcore-10.2.0
+module load Python/3.8.6-GCCcore-10.2.0
+
+python runs/run_helper.py spec2017 $task $index $name $tag $special
+
+echo DONE
