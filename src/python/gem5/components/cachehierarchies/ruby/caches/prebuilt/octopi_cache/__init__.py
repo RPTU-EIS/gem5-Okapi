@@ -1,5 +1,5 @@
-# Copyright (c) 2020 The Regents of the University of California
-# All Rights Reserved.
+# Copyright (c) 2022-2023 The Regents of the University of California
+# All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are
@@ -23,31 +23,3 @@
 # THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
-FROM ubuntu:18.04
-
-# Valid version values:
-# 3.9
-# 4.0
-# 5.0
-# 6.0
-# 7
-# 8
-# 9
-ARG version
-
-RUN apt -y update && apt -y upgrade && \
-    apt -y install git m4 scons zlib1g zlib1g-dev clang-${version} \
-    libprotobuf-dev protobuf-compiler libprotoc-dev libgoogle-perftools-dev \
-    python3-dev python3 doxygen make
-
-RUN apt-get --purge -y remove gcc
-
-RUN update-alternatives --install \
-    /usr/bin/clang++ clang++ /usr/bin/clang++-${version} 100
-RUN update-alternatives --install \
-    /usr/bin/clang clang /usr/bin/clang-${version} 100
-RUN update-alternatives --install \
-    /usr/bin/c++ c++ /usr/bin/clang++-${version} 100
-RUN update-alternatives --install \
-    /usr/bin/cc cc /usr/bin/clang-${version} 100
