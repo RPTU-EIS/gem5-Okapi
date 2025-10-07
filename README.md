@@ -1,3 +1,9 @@
+# Okapi
+
+This repository is the implementation of the Okapi architecture in the gem5 simulator.
+The research paper can be found here <https://dl.acm.org/doi/full/10.1145/3708821.3733869>.
+
+
 # The gem5 Simulator
 
 This is the repository for the gem5 simulator. It contains the full source code
